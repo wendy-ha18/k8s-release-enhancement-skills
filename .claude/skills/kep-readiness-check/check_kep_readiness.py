@@ -365,6 +365,16 @@ def checkbox(ok):
     return "x" if ok else " "
 
 
+def pr_ref(kep_pr_url):
+    """Markdown link to append to a checklist line, e.g. ' ([PR #6267](https://...))'.
+    Empty when no PR was found at all (everything already merged with no open PR)."""
+    if not kep_pr_url:
+        return ""
+    m = re.search(r"/pull/(\d+)$", kep_pr_url)
+    label = f"PR #{m.group(1)}" if m else "PR"
+    return f" ([{label}]({kep_pr_url}))"
+
+
 def render_report(issue, owner_login, target_stage, action_items,
                    questionnaire_ok, kep_yaml_ok, prr_approval_ok, kep_pr_url, milestone_ok, all_ok):
     print("=" * 70)
@@ -390,6 +400,7 @@ def render_report(issue, owner_login, target_stage, action_items,
 
     owner_mention = f"@{owner_login}" if owner_login else "{enhancement owner}"
     stage_display = target_stage or "{stage}"
+    pr_suffix = pr_ref(kep_pr_url)
 
     if all_ok:
         comment = f"""\
@@ -401,9 +412,9 @@ This enhancement is targeting stage `{stage_display}` for 1.38 (correct me, if o
 
 Here's where this enhancement currently stands:
 
-- [x] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.
-- [x] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.
-- [x] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.
+- [x] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.{pr_suffix}
+- [x] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.{pr_suffix}
+- [x] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.{pr_suffix}
 
 Note that the PR is not required to be approved or merged by the KEP readiness (formerly named PRR freeze) deadline. Having the PRR questionnaire filled out by the deadline will help ensure that the PRR team has enough time to review your KEP before **enhancements freeze on {ENHANCEMENTS_FREEZE}**. For more information on the PRR process, see [here](https://github.com/kubernetes/community/blob/master/sig-architecture/production-readiness.md#submitting-a-kep-for-production-readiness-approval).
 
@@ -421,9 +432,9 @@ This enhancement is targeting stage `{stage_display}` for 1.38 (correct me, if o
 
 Here's where this enhancement currently stands:
 
-- [{checkbox(questionnaire_ok)}] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.
-- [{checkbox(kep_yaml_ok)}] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.
-- [{checkbox(prr_approval_ok)}] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.
+- [{checkbox(questionnaire_ok)}] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.{pr_suffix}
+- [{checkbox(kep_yaml_ok)}] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.{pr_suffix}
+- [{checkbox(prr_approval_ok)}] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.{pr_suffix}
 
 For this KEP, we would just need to update the following:
 {bullet_items}
@@ -441,11 +452,28 @@ If you anticipate missing KEP readiness (formerly named PRR freeze), you can fil
 # --------------------------------------------------------------------------
 
 def main():
-    if len(sys.argv) != 2:
-        print("usage: check_kep_readiness.py <issue-number>", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print("usage: check_kep_readiness.py <issue-number> [<issue-number> ...]", file=sys.stderr)
         sys.exit(1)
-    issue_number = sys.argv[1]
+    issue_numbers = sys.argv[1:]
 
+    exit_code = 0
+    for i, issue_number in enumerate(issue_numbers):
+        if len(issue_numbers) > 1:
+            if i > 0:
+                print()
+            print(f"########## Issue {i + 1} of {len(issue_numbers)}: #{issue_number} ##########")
+        sys.stdout.flush()  # keep stderr error messages below in the right order when redirected
+        try:
+            check_issue(issue_number)
+        except RuntimeError as e:
+            print(f"error checking issue #{issue_number}: {e}", file=sys.stderr)
+            exit_code = 1
+            continue
+    sys.exit(exit_code)
+
+
+def check_issue(issue_number):
     issue = gh_json(
         "issue", "view", issue_number, "--repo", REPO,
         "--json", "number,title,labels,milestone,state,url,body",
@@ -605,8 +633,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except RuntimeError as e:
-        print(f"error: {e}", file=sys.stderr)
-        sys.exit(1)
+    main()

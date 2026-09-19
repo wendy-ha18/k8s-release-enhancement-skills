@@ -1,14 +1,15 @@
 ---
 name: kep-readiness-check
-description: Check whether a Kubernetes enhancement (KEP) tracking issue in kubernetes/enhancements meets the KEP Readiness deadline (formerly "PRR freeze") criteria for the current milestone, and draft the reminder comment to post on the issue. Use this whenever the user wants to check KEP readiness, PRR freeze status, or draft a KEP readiness / PRR reminder comment for a specific enhancements issue number.
+description: Use this whenever the user wants to check KEP readiness status and draft a reminder comment for a specific enhancements issue number.
+date: 2026-09-20
 ---
 
 # KEP Readiness Check
 
 Checks a single `kubernetes/enhancements` tracking issue against the KEP
 Readiness (formerly "PRR freeze") criteria for the current release, and
-drafts the Slack-style reminder comment the Enhancements team posts on the
-issue. It never posts anything itself — it only produces a draft for you to
+drafts a dedicated reminder comment that Enhancements team can use to posts on the
+issue. The skill never posts anything itself — it only produces a draft for you to
 review and post by hand (e.g. via `gh issue comment`).
 
 ## What it checks
@@ -36,8 +37,8 @@ free-form issue body text — labels are actively maintained metadata, not
 prose that can silently drift.
 
 **Finding the KEP's own PR** does *not* use the issue body's "PRs by stage
-and milestone" checklist as its primary source — that checklist is exactly
-the kind of free-form text contributors forget to update as a KEP moves
+and milestone" checklist as its primary source — that checklist is the kind 
+of free-form text contributors forget to update as a KEP moves
 through many PRs over many release cycles (confirmed by testing against
 real long-running KEPs). Instead the script pools candidates from three
 independent signals, then requires every candidate to clear one shared
@@ -117,32 +118,40 @@ non-standard phrasing.
 
 ## Running it
 
-Run the driver with the issue number:
+Run the driver with one or more issue numbers (space-separated):
 
 ```bash
-python3 .claude/skills/kep-readiness-check/check_kep_readiness.py <issue-number>
+python3 .claude/skills/kep-readiness-check/check_kep_readiness.py <issue-number> [<issue-number> ...]
 ```
 
 (Path is relative to the repo root you're running Claude Code from — adjust
 if your cwd differs.)
 
-When this skill is invoked (e.g. via `/kep-readiness-check`) and the user
-hasn't already given an issue number, **ask for it** before running
-anything — e.g. "Which kubernetes/enhancements issue number do you want a
-KEP readiness report for?" To sweep the whole [v1.38 tracking
-board](https://github.com/orgs/kubernetes/projects/269/views/1), run it
-once per issue number on the board and summarize the results — there's no
-bulk mode built in, so just loop over the issue numbers the user gives you
-(or that you list from the board/milestone).
+With a single issue number, it just prints that one report. With two or
+more, it prints a `########## Issue N of M: #<number> ##########` header
+before each one and keeps going even if one issue fails (e.g. a typo'd
+issue number) — the error for that issue goes to stderr and the rest of
+the batch still runs; the process exits non-zero if *any* issue failed.
 
-The script prints, in order:
+When this skill is invoked (e.g. via `/kep-readiness-check`) and the user
+hasn't already given at least one issue number, **ask for it** before
+running anything — e.g. "Which kubernetes/enhancements issue number(s) do
+you want a KEP readiness report for?" To sweep the whole [v1.38 tracking
+board](https://github.com/orgs/kubernetes/projects/269/views/1), pass every
+issue number from the board in one invocation and summarize the combined
+results — there's no need to run it once per issue.
+
+The script prints, for each issue, in order:
 
 1. A short status summary (owner, target stage, milestone, the KEP's PR
    link if one is open, pass/fail per criterion).
 2. The full draft comment, using the "still at risk" template (unchecked
    boxes + a bullet list of exactly what's missing) or the "fully tracked"
    template (all boxes checked, ends with `/label tracked/yes`) depending on
-   whether every criterion passed.
+   whether every criterion passed. Each of the three checklist lines links
+   the KEP PR that was actually checked (e.g. `([PR #6267](https://.../pull/6267))`)
+   when one was found — omitted only when no open PR exists at all and
+   everything is already satisfied on master.
 
 Show the user both the status summary and the draft comment. **Do not post
 the comment automatically** — ask the user first (e.g. "want me to post
