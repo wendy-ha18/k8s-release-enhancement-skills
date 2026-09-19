@@ -12,9 +12,11 @@ the KEP PR is still open). Never posts or modifies anything.
 """
 import base64
 import json
+import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 import yaml
 
@@ -23,6 +25,9 @@ TARGET_MILESTONE = "v1.38"
 KEP_READINESS_DEADLINE = (
     "Tuesday 22nd September 2026 (AoE) / Wednesday 23th September 2026 12:00 UTC"
 )
+# The same deadline as an actual instant, used to decide whether it's already
+# passed -- keep this in sync with KEP_READINESS_DEADLINE above every cycle.
+KEP_READINESS_DEADLINE_UTC = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
 ENHANCEMENTS_FREEZE = (
     "Tuesday 29th September 2026 (AoE) / Wednesday 30th September 2026 12:00 UTC"
 )
@@ -358,7 +363,9 @@ def check_questionnaire(prr_section, stage):
 
 
 # --------------------------------------------------------------------------
-# Report rendering
+# Report rendering -- builds Markdown, never prints the full report to the
+# terminal. Everything goes to a report/kep-readiness-<timestamp>.md file;
+# the terminal only gets a short pointer to it.
 # --------------------------------------------------------------------------
 
 def checkbox(ok):
@@ -375,28 +382,34 @@ def pr_ref(kep_pr_url):
     return f" ([{label}]({kep_pr_url}))"
 
 
-def render_report(issue, owner_login, target_stage, action_items,
-                   questionnaire_ok, kep_yaml_ok, prr_approval_ok, kep_pr_url, milestone_ok, all_ok):
-    print("=" * 70)
-    print(f"KEP readiness check -- issue #{issue['number']}: {issue['title']}")
-    print(issue["url"])
-    print("=" * 70)
-    print(f"Enhancement owner (KEP PR author): {'@' + owner_login if owner_login else 'UNKNOWN -- fill in manually'}")
-    print(f"Target stage for {TARGET_MILESTONE}: {target_stage or 'UNKNOWN'}")
-    print(f"In {TARGET_MILESTONE} milestone: {'yes' if milestone_ok else 'NO'}")
-    if kep_pr_url:
-        print(f"KEP update PR: {kep_pr_url}")
-    print()
-    if action_items:
-        print(f"Status: NOT fully ready -- {len(action_items)} item(s) outstanding")
-        for item in action_items:
-            print(f"  - {item}")
-    else:
-        print("Status: all KEP readiness criteria met.")
-    print()
-    print("-" * 70)
-    print("DRAFT COMMENT -- review before posting, do not auto-post:")
-    print("-" * 70)
+def md_escape_cell(s):
+    """Make a string safe to embed in a Markdown table cell."""
+    return (s or "").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def decide_status(all_ok, past_deadline):
+    if all_ok:
+        return "Tracked for KEP readiness"
+    if past_deadline:
+        return "Removed from Milestone"
+    return "At risk for KEP readiness"
+
+
+def render_issue_markdown(result):
+    """Return (decision, markdown_block) for one successfully-checked issue."""
+    issue = result["issue"]
+    owner_login = result["owner_login"]
+    target_stage = result["target_stage"]
+    action_items = result["action_items"]
+    questionnaire_ok = result["questionnaire_ok"]
+    kep_yaml_ok = result["kep_yaml_ok"]
+    prr_approval_ok = result["prr_approval_ok"]
+    kep_pr_url = result["kep_pr_url"]
+    milestone_ok = result["milestone_ok"]
+    all_ok = result["all_ok"]
+
+    past_deadline = datetime.now(timezone.utc) >= KEP_READINESS_DEADLINE_UTC
+    decision = decide_status(all_ok, past_deadline)
 
     owner_mention = f"@{owner_login}" if owner_login else "{enhancement owner}"
     stage_display = target_stage or "{stage}"
@@ -421,6 +434,27 @@ Note that the PR is not required to be approved or merged by the KEP readiness (
 With all the KEP readiness (formerly named PRR freeze) requirements in place, this enhancement is now marked as `Tracked for KEP readiness`! Please keep the issue description up-to-date with appropriate stages as well.
 
 /label tracked/yes"""
+    elif past_deadline:
+        bullet_items = "\n".join(f"- {item}" for item in action_items) if action_items else "- (see status above)"
+        comment = f"""\
+Hello {owner_mention} :wave:, 1.38 Enhancements team here.
+
+This is a follow-up on the [KEP readiness (formerly named PRR freeze)](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#prr-freeze) deadline, which passed on **{KEP_READINESS_DEADLINE}**.
+
+This enhancement was targeting stage `{stage_display}` for 1.38 (correct me, if otherwise)
+
+Here's where this enhancement currently stands:
+
+- [{checkbox(questionnaire_ok)}] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.{pr_suffix}
+- [{checkbox(kep_yaml_ok)}] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.{pr_suffix}
+- [{checkbox(prr_approval_ok)}] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.{pr_suffix}
+
+The following were still missing at the deadline:
+{bullet_items}
+
+Per the [KEP readiness policy](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#prr-freeze), an enhancement that doesn't meet these requirements by the deadline is removed from the milestone. This enhancement is now marked as `Removed from Milestone` for 1.38.
+
+If you'd like this enhancement to remain in the v1.38 milestone, please file an [exception request](https://github.com/kubernetes/sig-release/blob/master/releases/EXCEPTIONS.md) as soon as possible. Thank you!"""
     else:
         bullet_items = "\n".join(f"- {item}" for item in action_items) if action_items else "- (see status above)"
         comment = f"""\
@@ -444,7 +478,90 @@ Note that the PR is not required to be approved or merged by the KEP readiness (
 The status of this enhancement is marked as `At risk for KEP readiness`. Please keep the issue description up-to-date with appropriate stages as well.
 
 If you anticipate missing KEP readiness (formerly named PRR freeze), you can file an [exception request](https://github.com/kubernetes/sig-release/blob/master/releases/EXCEPTIONS.md) in advance. Thank you!"""
-    print(comment)
+
+    lines = [
+        f"## Issue #{issue['number']}: {issue['title']}",
+        "",
+        f"- **URL:** {issue['url']}",
+        f"- **Enhancement owner (KEP PR author):** {owner_mention if owner_login else 'UNKNOWN -- fill in manually'}",
+        f"- **Target stage for {TARGET_MILESTONE}:** {target_stage or 'UNKNOWN'}",
+        f"- **In {TARGET_MILESTONE} milestone:** {'yes' if milestone_ok else 'NO'}",
+    ]
+    if kep_pr_url:
+        lines.append(f"- **KEP update PR:** {kep_pr_url}")
+    lines.append(f"- **Recommended v1.38 tracking board status:** `{decision}`")
+    lines.append("")
+    if action_items:
+        lines.append(f"**Status: NOT fully ready -- {len(action_items)} item(s) outstanding**")
+        lines.append("")
+        for item in action_items:
+            lines.append(f"- {item}")
+    else:
+        lines.append("**Status: all KEP readiness criteria met.**")
+    lines += [
+        "",
+        "### Draft comment",
+        "",
+        "*(review before posting -- do not auto-post)*",
+        "",
+        "```markdown",
+        comment,
+        "```",
+    ]
+    return decision, "\n".join(lines)
+
+
+def summary_row(result, decision):
+    issue = result["issue"]
+    title = md_escape_cell(issue["title"])
+    issue_cell = f"[#{issue['number']}]({issue['url']}) {title}"
+    owner_cell = f"@{result['owner_login']}" if result["owner_login"] else "UNKNOWN"
+    stage_cell = result["target_stage"] or "UNKNOWN"
+    milestone_cell = "yes" if result["milestone_ok"] else "NO"
+    return (issue_cell, owner_cell, stage_cell, milestone_cell, decision)
+
+
+def summary_row_for_error(issue_number):
+    return (f"#{issue_number}", "--", "--", "--", "FAILED (see detail section)")
+
+
+def error_markdown(issue_number, error):
+    return f"## Issue #{issue_number}: FAILED\n\nCould not check this issue: {error}\n"
+
+
+def build_summary_table(rows):
+    header = (
+        f"| Issue | Enhancement owner (KEP PR author) | Target stage for {TARGET_MILESTONE} "
+        f"| In {TARGET_MILESTONE} milestone | Recommended {TARGET_MILESTONE} tracking board status |"
+    )
+    sep = "|---|---|---|---|---|"
+    body = "\n".join(f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in rows)
+    return "\n".join([header, sep, body])
+
+
+def build_report_document(issue_numbers, rows, sections):
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    header = "\n".join([
+        f"# KEP Readiness Report -- {TARGET_MILESTONE}",
+        "",
+        f"Generated: {generated}",
+        f"Issues checked: {len(issue_numbers)}",
+        "",
+        "## Summary",
+        "",
+        build_summary_table(rows),
+    ])
+    body = "\n\n---\n\n".join(sections)
+    return header + "\n\n---\n\n" + body + "\n"
+
+
+def write_report(doc):
+    os.makedirs("report", exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = os.path.join("report", f"kep-readiness-{timestamp}.md")
+    with open(path, "w") as f:
+        f.write(doc)
+    return path
 
 
 # --------------------------------------------------------------------------
@@ -458,18 +575,25 @@ def main():
     issue_numbers = sys.argv[1:]
 
     exit_code = 0
-    for i, issue_number in enumerate(issue_numbers):
-        if len(issue_numbers) > 1:
-            if i > 0:
-                print()
-            print(f"########## Issue {i + 1} of {len(issue_numbers)}: #{issue_number} ##########")
-        sys.stdout.flush()  # keep stderr error messages below in the right order when redirected
+    rows = []
+    sections = []
+    for issue_number in issue_numbers:
         try:
-            check_issue(issue_number)
+            result = check_issue(issue_number)
         except RuntimeError as e:
-            print(f"error checking issue #{issue_number}: {e}", file=sys.stderr)
             exit_code = 1
+            rows.append(summary_row_for_error(issue_number))
+            sections.append(error_markdown(issue_number, e))
             continue
+        decision, detail_md = render_issue_markdown(result)
+        rows.append(summary_row(result, decision))
+        sections.append(detail_md)
+
+    doc = build_report_document(issue_numbers, rows, sections)
+    path = write_report(doc)
+
+    print(f"Report written to: {path}")
+    print(f"View the summary table and full draft comment(s) there ({len(issue_numbers)} issue(s) checked).")
     sys.exit(exit_code)
 
 
@@ -626,10 +750,18 @@ def check_issue(issue_number):
         and prr_approval_ok
     )
 
-    render_report(
-        issue, owner_login, target_stage, action_items,
-        questionnaire_ok, kep_yaml_ok, prr_approval_ok, kep_pr_url, milestone_ok, all_ok,
-    )
+    return {
+        "issue": issue,
+        "owner_login": owner_login,
+        "target_stage": target_stage,
+        "action_items": action_items,
+        "questionnaire_ok": questionnaire_ok,
+        "kep_yaml_ok": kep_yaml_ok,
+        "prr_approval_ok": prr_approval_ok,
+        "kep_pr_url": kep_pr_url,
+        "milestone_ok": milestone_ok,
+        "all_ok": all_ok,
+    }
 
 
 if __name__ == "__main__":

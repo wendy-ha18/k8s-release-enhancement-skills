@@ -84,27 +84,20 @@ Then:
 
 ### Graduation-aware kep.yaml check
 
-The policy text is specific:
+Per policy, `milestone.<stage>` only needs updating **if the KEP is
+graduating to a new stage this cycle**; `latest-milestone` always has to
+equal the current release regardless. The script determines "graduating"
+by comparing the target stage (from the label) to whatever `stage` is set
+to on master right now, before any open PR's changes: if they differ (or
+`kep.yaml` doesn't exist on master yet), it's a graduation and
+`milestone.<stage>` must equal the current milestone; if they're the same,
+the KEP is just continuing at its existing stage, so `milestone.<stage>`
+is left alone and may still show whichever earlier release first reached
+it.
 
-> `milestone` struct updated with the current stage and release (**only if
-> graduating to a new stage**)
-
-So the script compares the target stage (from the label) against what
-`stage` is set to **on master right now** (before any open PR's changes).
-If they differ (or `kep.yaml` doesn't exist on master yet at all), the KEP
-is graduating this cycle, and `milestone.<stage>` must equal the current
-milestone. If they're the same — the KEP is just continuing at the stage it
-was already at last release — `milestone.<stage>` is left alone; it's
-allowed to still show whichever earlier release first reached that stage.
-`latest-milestone`, by contrast, always has to equal the current milestone,
-graduating or not.
-
-(Real example: issue #2535 has `stage: beta`, `milestone: {alpha: v1.33,
-beta: v1.35}` on master — it reached beta back in v1.35 and isn't
-graduating now, so `milestone.beta` staying at `v1.35` is correct and not
-flagged; only its stale `latest-milestone: v1.37` is a real gap. Contrast
-with #5419, which is going from `beta` to `stable` this cycle: there,
-`milestone.stable` genuinely needs to be added.)
+(Real example: issue #2535 has been `stage: beta` since v1.35 and isn't
+graduating now, so `milestone.beta` staying at `v1.35` is correct — only
+its stale `latest-milestone: v1.37` is a real gap.)
 
 Checks 1-3, 5, and 6 are exact (label/YAML field comparisons). Check 4 (the
 PRR questionnaire) is a **heuristic** — it looks for the KEP template's own
@@ -115,6 +108,40 @@ answer like "No." must not be flagged — it's complete, not empty). It
 catches the common case well, but always sanity-check it against the
 README before trusting it fully, especially if a KEP's questionnaire uses
 non-standard phrasing.
+
+### Recommended v1.38 tracking board status
+
+The status summary also prints a recommendation for the issue's Status
+field on the [v1.38 tracking board](https://github.com/orgs/kubernetes/projects/269/views/1),
+derived straight from the [PRR Freeze policy text](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#prr-freeze):
+
+- All criteria met → `Tracked for KEP readiness` (regardless of the
+  deadline — a KEP that's fully ready stays tracked).
+- Not all met, deadline hasn't passed yet → `At risk for KEP readiness`.
+- Not all met, deadline has passed → `Removed from Milestone` — the
+  policy is explicit that an enhancement failing to meet KEP Readiness by
+  the deadline is removed from the milestone and needs an [Exception].
+  The draft comment switches to a different template in this case (past
+  tense, cites the policy, points at filing an exception) instead of the
+  "still at risk" one.
+
+This does **not** read the tracking board itself — the `gh` token this
+skill was built against lacks the `read:project` OAuth scope needed to
+query GitHub Projects v2, so there's no "move from `<current status>` to
+`<recommendation>`" comparison, just the recommendation. If you grant
+`gh auth refresh -s read:project` and want that comparison added, the
+GraphQL query is `organization(login:"kubernetes") { projectV2(number:
+269) { items(first: 100) { nodes { content { ... on Issue { number } }
+fieldValues(first: 20) { nodes { ... on
+ProjectV2ItemFieldSingleSelectValue { name field { ... on
+ProjectV2SingleSelectField { name } } } } } } } } }`, paginated to find
+the item whose `content.number` matches and whose field is named
+`Status`.
+
+The deadline check compares the current time against
+`KEP_READINESS_DEADLINE_UTC`, a datetime constant kept in sync with the
+human-readable `KEP_READINESS_DEADLINE` string — update both together each
+release cycle (see "Updating for a new release cycle" below).
 
 ## Running it
 
@@ -127,38 +154,58 @@ python3 .claude/skills/kep-readiness-check/check_kep_readiness.py <issue-number>
 (Path is relative to the repo root you're running Claude Code from — adjust
 if your cwd differs.)
 
-With a single issue number, it just prints that one report. With two or
-more, it prints a `########## Issue N of M: #<number> ##########` header
-before each one and keeps going even if one issue fails (e.g. a typo'd
-issue number) — the error for that issue goes to stderr and the rest of
-the batch still runs; the process exits non-zero if *any* issue failed.
+**The script does not print the report to the terminal.** It writes a
+single Markdown file to `report/kep-readiness-<UTC-timestamp>.md`
+(creating the `report/` directory if needed — one file per run, timestamped
+so repeated runs don't clobber each other) and prints only a short pointer
+to it, e.g.:
+
+```
+Report written to: report/kep-readiness-20260919T183007Z.md
+View the summary table and full draft comment(s) there (3 issue(s) checked).
+```
 
 When this skill is invoked (e.g. via `/kep-readiness-check`) and the user
 hasn't already given at least one issue number, **ask for it** before
-running anything — e.g. "Which kubernetes/enhancements issue number(s) do
-you want a KEP readiness report for?" To sweep the whole [v1.38 tracking
+running anything — e.g. "Which kubernetes/enhancements issue number(s)
+would you like to generate a KEP readiness deadline reminder for?" To
+sweep the whole [v1.38 tracking
 board](https://github.com/orgs/kubernetes/projects/269/views/1), pass every
-issue number from the board in one invocation and summarize the combined
-results — there's no need to run it once per issue.
+issue number from the board in one invocation — there's no need to run it
+once per issue.
 
-The script prints, for each issue, in order:
+**Once the script finishes, just tell the user the report is ready and
+give them the file path** — e.g. "Report ready at `report/kep-readiness-
+<timestamp>.md`." Don't paste the report's contents into the chat and
+don't re-summarize it into your own table; the file already has everything
+(summary table + every issue's full status and draft comment) in the
+format described below. If the user then asks about a specific issue from
+that run, or wants to post one of the drafts, read the file to answer —
+just don't proactively dump it.
 
-1. A short status summary (owner, target stage, milestone, the KEP's PR
-   link if one is open, pass/fail per criterion).
-2. The full draft comment, using the "still at risk" template (unchecked
-   boxes + a bullet list of exactly what's missing) or the "fully tracked"
-   template (all boxes checked, ends with `/label tracked/yes`) depending on
-   whether every criterion passed. Each of the three checklist lines links
-   the KEP PR that was actually checked (e.g. `([PR #6267](https://.../pull/6267))`)
+The report file itself has, in order:
+
+1. A title, generation timestamp, and issue count.
+2. A **Summary** table — one row per issue: number/title (linked),
+   enhancement owner, target stage, whether it's in the v1.38 milestone,
+   and the recommended tracking-board status (see below). A failed lookup
+   (e.g. a typo'd issue number) gets a `FAILED` row instead, and the run's
+   exit code is non-zero if any issue failed — the rest of the batch still
+   completes and gets its own section.
+3. One `## Issue #N: <title>` section per issue checked, each with the same
+   status detail as the summary row plus the full outstanding-items list
+   and the draft comment in a fenced ```` ```markdown ```` block (so it's
+   copy-pasteable as-is, checkboxes and links included, into `gh issue
+   comment`). Each of the three checklist lines in the draft links the KEP
+   PR that was actually checked (e.g. `([PR #6267](https://.../pull/6267))`)
    when one was found — omitted only when no open PR exists at all and
    everything is already satisfied on master.
 
-Show the user both the status summary and the draft comment. **Do not post
-the comment automatically** — ask the user first (e.g. "want me to post
-this with `gh issue comment <n> --repo kubernetes/enhancements --body-file
--`?"). Posting a comment on a public upstream issue is a visible, hard-to-
-undo action, so it needs explicit sign-off every time, not just a one-time
-approval.
+**Do not post any comment automatically** — ask the user first (e.g. "want
+me to post this with `gh issue comment <n> --repo kubernetes/enhancements
+--body-file -`?"). Posting a comment on a public upstream issue is a
+visible, hard-to-undo action, so it needs explicit sign-off every time, not
+just a one-time approval.
 
 ## Prerequisites
 
@@ -167,6 +214,9 @@ approval.
   .../contents/...`, `api .../git/trees/master`) — no writes.
 - PyYAML (`python3 -c "import yaml"` to check; `pip3 install pyyaml` if
   missing).
+- Write access to `report/` under the cwd (the script creates the directory
+  if it doesn't exist). `report/` is gitignored — reports are working
+  output, not something to commit.
 
 ## Updating for a new release cycle
 
@@ -176,16 +226,23 @@ top of `check_kep_readiness.py`:
 ```python
 TARGET_MILESTONE = "v1.38"
 KEP_READINESS_DEADLINE = "..."
+KEP_READINESS_DEADLINE_UTC = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
 ENHANCEMENTS_FREEZE = "..."
 ```
 
 Each release cycle, pull the new dates from
 `https://github.com/kubernetes/sig-release/tree/master/releases/release-1.<N>`
 (the "Timeline" table's **KEP Readiness Deadline** and **Enhancements
-Freeze** rows) and update these three constants, along with the milestone
-number implied by `kubernetes/enhancements/milestone/<N>` if you want the
-script to sanity-check milestone numbers too (it currently only compares
-milestone *titles*, e.g. `"v1.38"`, so no other change is needed there).
+Freeze** rows) and update all four: the human-readable
+`KEP_READINESS_DEADLINE` string AND `KEP_READINESS_DEADLINE_UTC` must
+describe the *same instant* — the datetime constant is what actually drives
+the `Tracked` / `At risk` / `Removed from Milestone` decision (see
+"Recommended v1.38 tracking board status" above), so if only the string is
+updated the decision logic will silently use the wrong cutoff. Also update
+the milestone number implied by `kubernetes/enhancements/milestone/<N>` if
+you want the script to sanity-check milestone numbers too (it currently
+only compares milestone *titles*, e.g. `"v1.38"`, so no other change is
+needed there).
 
 ## Gotchas found while building this
 
