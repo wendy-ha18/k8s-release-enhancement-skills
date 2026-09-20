@@ -776,13 +776,14 @@ def build_summary_table(rows):
     return "\n".join([header, sep, body])
 
 
-def build_report_document(issue_numbers, rows, sections):
+def build_report_document(issue_numbers, rows, sections, input_description):
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     header = "\n".join([
         f"# KEP Readiness Report -- {TARGET_MILESTONE}",
         "",
         f"Generated: {generated}",
         f"Issues checked: {len(issue_numbers)}",
+        f"Generate draft reminder comment for {input_description}.",
         "",
         "## Summary",
         "",
@@ -890,6 +891,8 @@ def main():
     KEP_READINESS_DEADLINE, KEP_READINESS_DEADLINE_UTC, ENHANCEMENTS_FREEZE = load_release_deadlines()
 
     if args.contact:
+        handle = args.contact.lstrip("@")
+        input_description = f"Enhancement Contact @{handle}"
         try:
             issue_numbers = resolve_issues_by_enhancement_contact(args.contact)
         except RuntimeError as e:
@@ -898,11 +901,12 @@ def main():
         if not issue_numbers:
             print(
                 f"No issues found on the v1.38 tracking board with Enhancements Contact "
-                f"@{args.contact.lstrip('@')}.", file=sys.stderr,
+                f"@{handle}.", file=sys.stderr,
             )
             sys.exit(1)
     elif args.sig:
         sig_value = normalize_sig_option(args.sig)
+        input_description = f"SIG {sig_value}"
         try:
             issue_numbers = resolve_issues_by_sig(args.sig)
         except RuntimeError as e:
@@ -913,6 +917,7 @@ def main():
             sys.exit(1)
     else:
         issue_numbers = args.issue_numbers
+        input_description = "KEP issue(s) " + ", ".join(f"#{n}" for n in issue_numbers)
 
     exit_code = 0
     rows = []
@@ -932,7 +937,7 @@ def main():
         rows.append(summary_row(result, decision))
         sections.append(detail_md)
 
-    doc = build_report_document(issue_numbers, rows, sections)
+    doc = build_report_document(issue_numbers, rows, sections, input_description)
     path = write_report(doc)
 
     print(f"Report written to: {path}")

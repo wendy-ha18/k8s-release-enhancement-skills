@@ -372,7 +372,11 @@ proactively dump it.
 
 The file itself, in order:
 
-1. Title, generation timestamp, and issue count.
+1. Title, generation timestamp, issue count, and **which input was used**
+   to generate the run — the specific issue numbers, or `Enhancement
+   Contact @<handle>`, or `SIG <sig-name>` — as its own line, e.g.
+   `Generate draft reminder comment for SIG sig-network.` This makes a
+   report self-describing without needing to check how it was invoked.
 2. The **Summary** table from Section 7, one row per issue checked (or a
    `FAILED` row).
 3. One section per issue, in this exact structure:
