@@ -6,11 +6,13 @@ date: 2026-09-20
 
 # KEP Readiness Check
 
-Checks a single `kubernetes/enhancements` tracking issue against the KEP
-Readiness (formerly "PRR freeze") criteria for the current release, and
-drafts a dedicated reminder comment that Enhancements team can use to posts on the
-issue. The skill never posts anything itself — it only produces a draft for you to
-review and post by hand (e.g. via `gh issue comment`).
+Checks one or more `kubernetes/enhancements` tracking issues against the
+KEP Readiness (formerly "PRR freeze") criteria for the current release,
+and drafts a dedicated reminder comment that Enhancements team can use to
+posts on each issue. Issues can be given directly, or resolved from a
+GitHub handle (Enhancement Contact) or a SIG name — see "Running it"
+below. The skill never posts anything itself — it only produces a draft
+for you to review and post by hand (e.g. via `gh issue comment`).
 
 ## What it checks
 
@@ -125,18 +127,20 @@ derived straight from the [PRR Freeze policy text](https://github.com/kubernetes
   tense, cites the policy, points at filing an exception) instead of the
   "still at risk" one.
 
-This does **not** read the tracking board itself — the `gh` token this
-skill was built against lacks the `read:project` OAuth scope needed to
-query GitHub Projects v2, so there's no "move from `<current status>` to
-`<recommendation>`" comparison, just the recommendation. If you grant
-`gh auth refresh -s read:project` and want that comparison added, the
-GraphQL query is `organization(login:"kubernetes") { projectV2(number:
-269) { items(first: 100) { nodes { content { ... on Issue { number } }
-fieldValues(first: 20) { nodes { ... on
-ProjectV2ItemFieldSingleSelectValue { name field { ... on
-ProjectV2SingleSelectField { name } } } } } } } } }`, paginated to find
-the item whose `content.number` matches and whose field is named
-`Status`.
+These three strings were checked against the board's actual `Status`
+field options (via the same GraphQL query `--contact`/`--sig` use) and
+match exactly, along with several other statuses this script doesn't
+compute (`At risk for enhancements freeze`, `Deferred`, `Exception
+Pending`, etc.) — this recommendation only ever covers the KEP Readiness
+phase, not the later ones.
+
+This does **not** currently read the tracking board's own `Status` value
+for a "move from `<current status>` to `<recommendation>`" comparison —
+just the recommendation on its own. `fetch_project_items()` and
+`project_field_value()` (added for `--contact`/`--sig`) already have
+everything needed to add that comparison cheaply if it's wanted later:
+call `project_field_value(item_node, "Status")` on the item matching the
+issue.
 
 The deadline check compares the current time against
 `KEP_READINESS_DEADLINE_UTC`, a datetime constant kept in sync with the
@@ -145,14 +149,47 @@ release cycle (see "Updating for a new release cycle" below).
 
 ## Running it
 
-Run the driver with one or more issue numbers (space-separated):
+Run the driver with **one of three kinds of input** (they're mutually
+exclusive — pick one per run):
 
 ```bash
+# 1. One or more issue numbers (space-separated)
 python3 .claude/skills/kep-readiness-check/check_kep_readiness.py <issue-number> [<issue-number> ...]
+
+# 2. Every issue on the v1.38 board whose Enhancements Contact is this handle
+python3 .claude/skills/kep-readiness-check/check_kep_readiness.py --contact <github-handle>
+
+# 3. Every issue on the v1.38 board whose SIG matches (accepts "sig-node", "sig/node", or just "node")
+python3 .claude/skills/kep-readiness-check/check_kep_readiness.py --sig <sig-name>
 ```
 
 (Path is relative to the repo root you're running Claude Code from — adjust
 if your cwd differs.)
+
+`--contact` and `--sig` query the actual [v1.38 Release Tracking
+board](https://github.com/orgs/kubernetes/projects/269) (org `kubernetes`,
+project 269) via the Projects v2 GraphQL API, reading its real
+**"Enhancements Contact"** and **"SIG"** fields, then run the exact same
+per-issue check as mode 1 on every matching issue — so `--sig` on a big
+SIG can mean dozens of issues in one run, each needing several `gh` calls;
+expect it to take a while and don't kill it early. This needs the
+`project` (or `read:project`) OAuth scope, on top of the `repo` scope
+everything else in this script uses — grant it once with `gh auth refresh
+-s read:project` (interactive; opens a browser flow, so it can't be
+scripted).
+
+**"Enhancements Contact" is not the issue's assignee.** They're two
+different stakeholders tracked as two different fields on the board: the
+Enhancements Contact is the *Enhancements team member* responsible for
+reminding a KEP's owner about deadlines (a fixed-roster single-select
+field, e.g. `@wendy-ha18` — not a free people-picker), while the issue's
+GitHub `assignees` is typically the KEP owner/author themselves. An earlier
+version of this skill got this wrong (matched on assignees instead), which
+is why this distinction is called out explicitly here. The **"SIG"** field
+is similarly its own board field, not identical to the issue's `sig/*`
+label — the two can diverge (verified on real data: `sig-network` returns
+5 issues from the board's SIG field vs. 8 from the `sig/network` label),
+so trust the board field, which is what both `--contact` and `--sig` read.
 
 **The script does not print the report to the terminal.** It writes a
 single Markdown file to `report/kep-readiness-<UTC-timestamp>.md`
@@ -166,13 +203,15 @@ View the summary table and full draft comment(s) there (3 issue(s) checked).
 ```
 
 When this skill is invoked (e.g. via `/kep-readiness-check`) and the user
-hasn't already given at least one issue number, **ask for it** before
+hasn't already given input, **ask which of the three they want** before
 running anything — e.g. "Which kubernetes/enhancements issue number(s)
-would you like to generate a KEP readiness deadline reminder for?" To
+would you like to generate a KEP readiness deadline reminder for? (Or give
+me your GitHub handle as the Enhancements Contact to check everything
+assigned to you, or a SIG name to check everything for that SIG.)" To
 sweep the whole [v1.38 tracking
-board](https://github.com/orgs/kubernetes/projects/269/views/1), pass every
-issue number from the board in one invocation — there's no need to run it
-once per issue.
+board](https://github.com/orgs/kubernetes/projects/269/views/1) entirely,
+pass every issue number from the board in one invocation instead — there's
+no need to run it once per issue.
 
 **Once the script finishes, just tell the user the report is ready and
 give them the file path** — e.g. "Report ready at `report/kep-readiness-
@@ -211,7 +250,11 @@ just a one-time approval.
 
 - `gh` CLI, authenticated (`gh auth status`). Only read-only `gh` calls are
   made (`issue view`, `pr view`, `api .../timeline`, `api .../commits`, `api
-  .../contents/...`, `api .../git/trees/master`) — no writes.
+  .../contents/...`, `api .../git/trees/master`, `api graphql`) — no writes.
+- The `project` (or `read:project`) OAuth scope, needed only for
+  `--contact`/`--sig` (they query the Projects v2 board). Grant with `gh
+  auth refresh -s read:project` if `gh auth status` doesn't already list
+  it — plain issue-number mode works without it.
 - PyYAML (`python3 -c "import yaml"` to check; `pip3 install pyyaml` if
   missing).
 - Write access to `report/` under the cwd (the script creates the directory
@@ -246,6 +289,27 @@ needed there).
 
 ## Gotchas found while building this
 
+- **"Enhancements Contact" is a different person from the issue's
+  assignee — don't infer one from the other.** An earlier version of
+  `--contact` matched on the issue's GitHub `assignees` field on the
+  (wrong) assumption that it correlated with the board's Enhancements
+  Contact. It happened to line up on the handful of issues tested, which
+  made the bug easy to miss — the actual field only exists on the Projects
+  v2 board and has its own fixed-roster single-select values (e.g.
+  `@wendy-ha18`), read via `fetch_project_items()` /
+  `project_field_value()`. Same lesson for "SIG": it's the board's own
+  field, not necessarily identical to the issue's `sig/*` label (verified:
+  `sig-network` returns a different, smaller set of issues from the board
+  field than from the label).
+- **A single malformed `kep.yaml` can crash a whole batch run if you're not
+  careful.** PyYAML's implicit timestamp resolver raises a raw `ValueError`
+  (not `yaml.YAMLError`) for a date-shaped-but-invalid value like a
+  `creation-date` with the day/month swapped -- found this for real while
+  testing `--sig sig-network` across 8 issues at once. All three
+  `yaml.safe_load` call sites catch `(yaml.YAMLError, ValueError)` now, and
+  `main()`'s per-issue loop catches any `Exception`, not just `RuntimeError`
+  -- a `--sig`/`--contact` run can cover dozens of issues, and one KEP's bad
+  file should turn into a `FAILED` row, never take down the whole run.
 - **The issue body's own "PRs by stage and milestone" checklist goes
   stale** — some real, currently-open KEPs (e.g. #6371) still say the
   literal `v1.xx` placeholder in that checklist even though the actual

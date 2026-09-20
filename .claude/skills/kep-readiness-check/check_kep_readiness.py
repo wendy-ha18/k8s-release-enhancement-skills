@@ -10,6 +10,7 @@ Requires: `gh` CLI, authenticated (gh auth status), and PyYAML.
 Only reads from GitHub (kubernetes/enhancements + the KEP author's fork if
 the KEP PR is still open). Never posts or modifies anything.
 """
+import argparse
 import base64
 import json
 import os
@@ -110,7 +111,11 @@ def get_master_stage(kep_yaml_path):
         return None
     try:
         return (yaml.safe_load(content) or {}).get("stage")
-    except yaml.YAMLError:
+    except (yaml.YAMLError, ValueError):
+        # A malformed but timestamp-shaped value (e.g. a creation-date with an
+        # invalid day/month) makes PyYAML's implicit date resolver raise a
+        # raw ValueError rather than YAMLError -- catch that too so one KEP's
+        # bad YAML doesn't take down a whole batch run.
         return None
 
 
@@ -253,6 +258,119 @@ def find_kep_pr(issue_number, issue_body):
 
 
 # --------------------------------------------------------------------------
+# Resolving a batch of issue numbers from an Enhancement Contact or a SIG,
+# instead of the caller having to already know the issue numbers. Both read
+# the actual v1.38 Release Tracking board (org "kubernetes", project 269)
+# via the Projects v2 GraphQL API -- this needs the `project` (or
+# `read:project`) OAuth scope (`gh auth refresh -s read:project`), which is
+# NOT covered by the `repo` scope used everywhere else in this script.
+#
+# "Enhancements Contact" is a genuinely different person from the issue's
+# GitHub assignee: it's the Enhancements *team* member responsible for
+# reminding the KEP's actual owner/assignee about deadlines, not the KEP
+# owner themselves. It's a fixed-roster single-select field on the board
+# (e.g. options like "@wendy-ha18"), not a people-picker, and not the same
+# as the issue's "Assignees" field (which the board also tracks separately).
+# --------------------------------------------------------------------------
+
+PROJECT_ORG = "kubernetes"
+PROJECT_NUMBER = 269
+
+PROJECT_ITEMS_QUERY = """
+query($cursor: String) {
+  organization(login: "%s") {
+    projectV2(number: %d) {
+      items(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          content {
+            __typename
+            ... on Issue {
+              number
+              repository { nameWithOwner }
+            }
+          }
+          fieldValues(first: 30) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                field { ... on ProjectV2SingleSelectField { name } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+""" % (PROJECT_ORG, PROJECT_NUMBER)
+
+
+def fetch_project_items():
+    """Fetch every item on the v1.38 Release Tracking board, paginated."""
+    items = []
+    cursor = None
+    while True:
+        args = ["gh", "api", "graphql", "-f", f"query={PROJECT_ITEMS_QUERY}"]
+        if cursor:
+            args += ["-F", f"cursor={cursor}"]
+        out = subprocess.run(args, capture_output=True, text=True)
+        if out.returncode != 0:
+            raise RuntimeError(
+                f"querying the v1.38 tracking board (project {PROJECT_NUMBER}) failed "
+                f"-- make sure `gh auth refresh -s read:project` has been run: {out.stderr.strip()}"
+            )
+        page = json.loads(out.stdout)["data"]["organization"]["projectV2"]["items"]
+        items.extend(page["nodes"])
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        cursor = page["pageInfo"]["endCursor"]
+    return items
+
+
+def project_field_value(item_node, field_name):
+    for fv in (item_node.get("fieldValues") or {}).get("nodes", []):
+        field = fv.get("field") or {}
+        if field.get("name") == field_name:
+            return fv.get("name")
+    return None
+
+
+def project_issue_numbers_matching(field_name, target_value):
+    numbers = []
+    for node in fetch_project_items():
+        content = node.get("content") or {}
+        if content.get("__typename") != "Issue":
+            continue
+        if (content.get("repository") or {}).get("nameWithOwner") != REPO:
+            continue
+        if project_field_value(node, field_name) == target_value:
+            numbers.append(str(content["number"]))
+    return numbers
+
+
+def resolve_issues_by_enhancement_contact(handle):
+    target = f"@{handle.strip().lstrip('@')}"
+    return project_issue_numbers_matching("Enhancements Contact", target)
+
+
+def normalize_sig_option(sig):
+    """Accept 'sig-node', 'sig/node', or just 'node' (case-insensitive) and
+    return the board's actual SIG field format: 'sig-node'."""
+    s = sig.strip().lower().replace("_", "-")
+    if s.startswith("sig/"):
+        s = "sig-" + s[len("sig/"):]
+    elif not s.startswith("sig-"):
+        s = f"sig-{s}"
+    return s
+
+
+def resolve_issues_by_sig(sig):
+    target = normalize_sig_option(sig)
+    return project_issue_numbers_matching("SIG", target)
+
+
+# --------------------------------------------------------------------------
 # kep.yaml / PRR approval file / PRR questionnaire checks
 # --------------------------------------------------------------------------
 
@@ -277,7 +395,7 @@ def check_kep_yaml(content, stage, target_milestone, is_graduating):
     """
     try:
         data = yaml.safe_load(content) or {}
-    except yaml.YAMLError as e:
+    except (yaml.YAMLError, ValueError) as e:
         return [f"kep.yaml failed to parse: {e}"]
     problems = []
     if data.get("stage") != stage:
@@ -302,7 +420,7 @@ def check_kep_yaml(content, stage, target_milestone, is_graduating):
 def check_prr_approval(content, stage):
     try:
         data = yaml.safe_load(content) or {}
-    except yaml.YAMLError as e:
+    except (yaml.YAMLError, ValueError) as e:
         return [f"PRR approval file failed to parse: {e}"]
     stage_block = data.get(stage)
     if not stage_block:
@@ -568,11 +686,60 @@ def write_report(doc):
 # Main
 # --------------------------------------------------------------------------
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Check KEP readiness for one or more kubernetes/enhancements issues.",
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--contact", metavar="GITHUB_HANDLE",
+        help="Check every issue on the v1.38 tracking board whose Enhancements "
+             "Contact field is this GitHub handle, instead of listing issue numbers.",
+    )
+    group.add_argument(
+        "--sig", metavar="SIG_NAME",
+        help="Check every issue on the v1.38 tracking board whose SIG field matches "
+             "(e.g. sig-node, sig/node, or just node), instead of listing issue numbers.",
+    )
+    parser.add_argument(
+        "issue_numbers", nargs="*",
+        help="One or more kubernetes/enhancements issue numbers.",
+    )
+    args = parser.parse_args()
+    if not args.contact and not args.sig and not args.issue_numbers:
+        parser.error("provide issue number(s), or --contact <github-handle>, or --sig <sig-name>")
+    if (args.contact or args.sig) and args.issue_numbers:
+        parser.error("--contact/--sig can't be combined with explicit issue numbers")
+    return args
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("usage: check_kep_readiness.py <issue-number> [<issue-number> ...]", file=sys.stderr)
-        sys.exit(1)
-    issue_numbers = sys.argv[1:]
+    args = parse_args()
+
+    if args.contact:
+        try:
+            issue_numbers = resolve_issues_by_enhancement_contact(args.contact)
+        except RuntimeError as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not issue_numbers:
+            print(
+                f"No issues found on the v1.38 tracking board with Enhancements Contact "
+                f"@{args.contact.lstrip('@')}.", file=sys.stderr,
+            )
+            sys.exit(1)
+    elif args.sig:
+        sig_value = normalize_sig_option(args.sig)
+        try:
+            issue_numbers = resolve_issues_by_sig(args.sig)
+        except RuntimeError as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
+        if not issue_numbers:
+            print(f"No issues found on the v1.38 tracking board with SIG `{sig_value}`.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        issue_numbers = args.issue_numbers
 
     exit_code = 0
     rows = []
@@ -580,7 +747,10 @@ def main():
     for issue_number in issue_numbers:
         try:
             result = check_issue(issue_number)
-        except RuntimeError as e:
+        except Exception as e:
+            # Broad on purpose: a batch run (--sig/--contact can cover dozens
+            # of issues) should never crash entirely because one KEP has some
+            # unanticipated malformed file -- isolate it to that issue's row.
             exit_code = 1
             rows.append(summary_row_for_error(issue_number))
             sections.append(error_markdown(issue_number, e))
