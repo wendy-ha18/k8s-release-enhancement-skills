@@ -22,16 +22,34 @@ from datetime import datetime, timezone
 import yaml
 
 REPO = "kubernetes/enhancements"
+SIG_RELEASE_REPO = "kubernetes/sig-release"
 TARGET_MILESTONE = "v1.38"
-KEP_READINESS_DEADLINE = (
+
+# Fallback deadline info, used only if the live fetch from kubernetes/sig-release
+# (load_release_deadlines(), called once at the top of main()) fails or can't be
+# parsed -- e.g. no network, or the release doc's format changed. Keeping these
+# in sync with reality is a nice-to-have now, not a hard requirement, since the
+# live fetch is what actually drives behavior; TARGET_MILESTONE above is the one
+# thing that still needs a manual update each cycle (see "Updating for a new
+# release cycle").
+KEP_READINESS_DEADLINE_FALLBACK = (
     "Tuesday 22nd September 2026 (AoE) / Wednesday 23th September 2026 12:00 UTC"
 )
-# The same deadline as an actual instant, used to decide whether it's already
-# passed -- keep this in sync with KEP_READINESS_DEADLINE above every cycle.
-KEP_READINESS_DEADLINE_UTC = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
-ENHANCEMENTS_FREEZE = (
+KEP_READINESS_DEADLINE_UTC_FALLBACK = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+ENHANCEMENTS_FREEZE_FALLBACK = (
     "Tuesday 29th September 2026 (AoE) / Wednesday 30th September 2026 12:00 UTC"
 )
+
+# Populated by load_release_deadlines() at the start of main() -- module-level
+# so the existing f-string references throughout this file keep working.
+KEP_READINESS_DEADLINE = KEP_READINESS_DEADLINE_FALLBACK
+KEP_READINESS_DEADLINE_UTC = KEP_READINESS_DEADLINE_UTC_FALLBACK
+ENHANCEMENTS_FREEZE = ENHANCEMENTS_FREEZE_FALLBACK
+
+MONTH_NUMBERS = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+}
 
 QUESTIONNAIRE_REQUIRED_SECTIONS = {
     "alpha": ["Feature Enablement and Rollback"],
@@ -141,6 +159,90 @@ def last_merged_pr_for_path(path):
     m = re.search(r"\(#(\d+)\)", message)
     pr_url = f"https://github.com/{REPO}/pull/{m.group(1)}" if m else None
     return author_login, pr_url
+
+
+# --------------------------------------------------------------------------
+# Fetching the KEP Readiness Deadline and Enhancements Freeze dates live from
+# kubernetes/sig-release, instead of relying on hardcoded constants that need
+# a manual update every release cycle. Falls back to the *_FALLBACK constants
+# above if the page can't be fetched or its format has changed.
+# --------------------------------------------------------------------------
+
+def extract_timeline_row(text, keyword):
+    """Find the Markdown table row in the release README's Timeline section
+    whose first (bolded "What") column contains `keyword`, and return its
+    cells. Row shape: | What | Who | When | Week | Release Signal |.
+
+    Requires the "What" cell to start with "**Begin" -- the actual deadline
+    row (e.g. "**Begin enforcing [KEP Readiness Deadline]**") -- because an
+    earlier row in the same table ("Call for KEP Readiness Deadline and
+    Enhancement Freeze Exceptions") also contains this keyword but is a
+    different, unrelated date (when exceptions can be requested, not the
+    deadline itself)."""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("|") or "**Begin" not in line or keyword not in line:
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) >= 3:
+            return cells
+    return None
+
+
+def parse_utc_datetime_from_when(when_text):
+    """The 'When' column reads like
+    '**Tuesday 22nd September 2026 (AoE) / Wednesday 23th September 2026 12:00 UTC**'
+    -- two dates separated by '/', the AoE one and the actual UTC instant.
+    Parse the second (UTC) one; returns None if the format doesn't match."""
+    m = re.search(
+        r"/\s*\w+\s+(\d{1,2})\w*\s+(\w+)\s+(\d{4})[, ]+(\d{1,2}):(\d{2})\s*UTC",
+        when_text,
+    )
+    if not m:
+        return None
+    day, month_name, year, hour, minute = m.groups()
+    month = MONTH_NUMBERS.get(month_name.lower())
+    if not month:
+        return None
+    try:
+        return datetime(int(year), month, int(day), int(hour), int(minute), tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def load_release_deadlines():
+    """Return (kep_readiness_deadline_str, kep_readiness_deadline_utc,
+    enhancements_freeze_str), fetched live from the current release's
+    README on kubernetes/sig-release. Falls back to the hardcoded
+    *_FALLBACK constants (with a note printed to stderr) if the fetch or
+    parse fails for any reason -- this must never raise and block a run."""
+    release_number = TARGET_MILESTONE.lstrip("vV")
+    path = f"releases/release-{release_number}/README.md"
+    try:
+        text = fetch_file(SIG_RELEASE_REPO, path)
+        if text is None:
+            raise RuntimeError(f"{SIG_RELEASE_REPO}/{path} not found")
+        kep_row = extract_timeline_row(text, "KEP Readiness Deadline")
+        freeze_row = extract_timeline_row(text, "Enhancements Freeze")
+        if not kep_row:
+            raise RuntimeError("could not find the 'KEP Readiness Deadline' row in the Timeline table")
+        kep_when = kep_row[2].strip("*")
+        kep_utc = parse_utc_datetime_from_when(kep_when)
+        if kep_utc is None:
+            raise RuntimeError(f"could not parse a UTC datetime out of: {kep_when!r}")
+        freeze_when = freeze_row[2].strip("*") if freeze_row else ENHANCEMENTS_FREEZE_FALLBACK
+        return kep_when, kep_utc, freeze_when
+    except RuntimeError as e:
+        print(
+            f"warning: could not load live release dates from {SIG_RELEASE_REPO}/{path} "
+            f"({e}) -- falling back to hardcoded dates, which may be stale.",
+            file=sys.stderr,
+        )
+        return (
+            KEP_READINESS_DEADLINE_FALLBACK,
+            KEP_READINESS_DEADLINE_UTC_FALLBACK,
+            ENHANCEMENTS_FREEZE_FALLBACK,
+        )
 
 
 # --------------------------------------------------------------------------
@@ -490,14 +592,28 @@ def checkbox(ok):
     return "x" if ok else " "
 
 
-def pr_ref(kep_pr_url):
-    """Markdown link to append to a checklist line, e.g. ' ([PR #6267](https://...))'.
-    Empty when no PR was found at all (everything already merged with no open PR)."""
+def pr_label(kep_pr_url):
+    """'PR #6267', or None if there's no PR at all."""
     if not kep_pr_url:
-        return ""
+        return None
     m = re.search(r"/pull/(\d+)$", kep_pr_url)
-    label = f"PR #{m.group(1)}" if m else "PR"
-    return f" ([{label}]({kep_pr_url}))"
+    return f"PR #{m.group(1)}" if m else "PR"
+
+
+def pr_link_md(kep_pr_url):
+    """'[PR #6267](url)' for use in a table cell, or '--' when there's none."""
+    label = pr_label(kep_pr_url)
+    return f"[{label}]({kep_pr_url})" if label else "--"
+
+
+def pr_mention_line(kep_pr_url):
+    """One-sentence, unambiguous statement of which PR (if any) these checks
+    were made against -- stated once, clearly, near the top of the draft
+    comment, rather than repeated as a suffix on all three checklist lines."""
+    label = pr_label(kep_pr_url)
+    if label:
+        return f"This is based on the KEP update [{label}]({kep_pr_url})."
+    return "No open KEP update PR was found for this issue -- these checks reflect what's currently merged."
 
 
 def md_escape_cell(s):
@@ -531,7 +647,7 @@ def render_issue_markdown(result):
 
     owner_mention = f"@{owner_login}" if owner_login else "{enhancement owner}"
     stage_display = target_stage or "{stage}"
-    pr_suffix = pr_ref(kep_pr_url)
+    pr_line = pr_mention_line(kep_pr_url)
 
     if all_ok:
         comment = f"""\
@@ -539,13 +655,13 @@ Hello {owner_mention} :wave:, 1.38 Enhancements team here.
 
 This is a reminder of the upcoming [KEP readiness (formerly named PRR freeze)](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#prr-freeze) on **{KEP_READINESS_DEADLINE}**.
 
-This enhancement is targeting stage `{stage_display}` for 1.38 (correct me, if otherwise)
+This enhancement is targeting stage `{stage_display}` for 1.38 (correct me, if otherwise). {pr_line}
 
 Here's where this enhancement currently stands:
 
-- [x] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.{pr_suffix}
-- [x] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.{pr_suffix}
-- [x] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.{pr_suffix}
+- [x] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.
+- [x] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.
+- [x] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.
 
 Note that the PR is not required to be approved or merged by the KEP readiness (formerly named PRR freeze) deadline. Having the PRR questionnaire filled out by the deadline will help ensure that the PRR team has enough time to review your KEP before **enhancements freeze on {ENHANCEMENTS_FREEZE}**. For more information on the PRR process, see [here](https://github.com/kubernetes/community/blob/master/sig-architecture/production-readiness.md#submitting-a-kep-for-production-readiness-approval).
 
@@ -559,13 +675,13 @@ Hello {owner_mention} :wave:, 1.38 Enhancements team here.
 
 This is a follow-up on the [KEP readiness (formerly named PRR freeze)](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#prr-freeze) deadline, which passed on **{KEP_READINESS_DEADLINE}**.
 
-This enhancement was targeting stage `{stage_display}` for 1.38 (correct me, if otherwise)
+This enhancement was targeting stage `{stage_display}` for 1.38 (correct me, if otherwise). {pr_line}
 
 Here's where this enhancement currently stands:
 
-- [{checkbox(questionnaire_ok)}] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.{pr_suffix}
-- [{checkbox(kep_yaml_ok)}] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.{pr_suffix}
-- [{checkbox(prr_approval_ok)}] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.{pr_suffix}
+- [{checkbox(questionnaire_ok)}] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.
+- [{checkbox(kep_yaml_ok)}] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.
+- [{checkbox(prr_approval_ok)}] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.
 
 The following were still missing at the deadline:
 {bullet_items}
@@ -580,13 +696,13 @@ Hello {owner_mention} :wave:, 1.38 Enhancements team here.
 
 This is a reminder of the upcoming [KEP readiness (formerly named PRR freeze)](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#prr-freeze) on **{KEP_READINESS_DEADLINE}**.
 
-This enhancement is targeting stage `{stage_display}` for 1.38 (correct me, if otherwise)
+This enhancement is targeting stage `{stage_display}` for 1.38 (correct me, if otherwise). {pr_line}
 
 Here's where this enhancement currently stands:
 
-- [{checkbox(questionnaire_ok)}] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.{pr_suffix}
-- [{checkbox(kep_yaml_ok)}] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.{pr_suffix}
-- [{checkbox(prr_approval_ok)}] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.{pr_suffix}
+- [{checkbox(questionnaire_ok)}] PR open or merged with the KEP's [PRR questionnaire](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template#production-readiness-review-questionnaire) filled out.
+- [{checkbox(kep_yaml_ok)}] PR open or merged with [kep.yaml](https://github.com/kubernetes/enhancements/blob/master/keps/NNNN-kep-template/kep.yaml) updated with the `stage`, `latest-milestone`, and `milestone` struct filled out.
+- [{checkbox(prr_approval_ok)}] PR open or merged with a [PRR approval file](https://github.com/kubernetes/enhancements/blob/master/keps/prod-readiness/template/nnnn.yaml) with the PRR approver listed for the stage the KEP is targeting.
 
 For this KEP, we would just need to update the following:
 {bullet_items}
@@ -597,28 +713,30 @@ The status of this enhancement is marked as `At risk for KEP readiness`. Please 
 
 If you anticipate missing KEP readiness (formerly named PRR freeze), you can file an [exception request](https://github.com/kubernetes/sig-release/blob/master/releases/EXCEPTIONS.md) in advance. Thank you!"""
 
+    row = summary_row(result, decision)
     lines = [
-        f"## Issue #{issue['number']}: {issue['title']}",
+        f"### #{issue['number']} \u2014 {issue['title']}",
         "",
-        f"- **URL:** {issue['url']}",
-        f"- **Enhancement owner (KEP PR author):** {owner_mention if owner_login else 'UNKNOWN -- fill in manually'}",
-        f"- **Target stage for {TARGET_MILESTONE}:** {target_stage or 'UNKNOWN'}",
-        f"- **In {TARGET_MILESTONE} milestone:** {'yes' if milestone_ok else 'NO'}",
+        "**Summary**",
+        "",
+        build_summary_table([row]),
+        "",
+        "**KEP Readiness**",
+        "",
+        f"- PRR questionnaire: {'\u2705' if questionnaire_ok else '\u274c'}",
+        f"- `kep.yaml`: {'\u2705' if kep_yaml_ok else '\u274c'}",
+        f"- PRR approval file: {'\u2705' if prr_approval_ok else '\u274c'}",
+        "",
+        "**Outstanding actions**",
+        "",
     ]
-    if kep_pr_url:
-        lines.append(f"- **KEP update PR:** {kep_pr_url}")
-    lines.append(f"- **Recommended v1.38 tracking board status:** `{decision}`")
-    lines.append("")
     if action_items:
-        lines.append(f"**Status: NOT fully ready -- {len(action_items)} item(s) outstanding**")
-        lines.append("")
-        for item in action_items:
-            lines.append(f"- {item}")
+        lines += [f"- {item}" for item in action_items]
     else:
-        lines.append("**Status: all KEP readiness criteria met.**")
+        lines.append("- None -- all criteria met.")
     lines += [
         "",
-        "### Draft comment",
+        "**Draft GitHub comment**",
         "",
         "*(review before posting -- do not auto-post)*",
         "",
@@ -633,27 +751,28 @@ def summary_row(result, decision):
     issue = result["issue"]
     title = md_escape_cell(issue["title"])
     issue_cell = f"[#{issue['number']}]({issue['url']}) {title}"
+    pr_cell = pr_link_md(result["kep_pr_url"])
     owner_cell = f"@{result['owner_login']}" if result["owner_login"] else "UNKNOWN"
     stage_cell = result["target_stage"] or "UNKNOWN"
     milestone_cell = "yes" if result["milestone_ok"] else "NO"
-    return (issue_cell, owner_cell, stage_cell, milestone_cell, decision)
+    return (issue_cell, pr_cell, owner_cell, stage_cell, milestone_cell, decision)
 
 
 def summary_row_for_error(issue_number):
-    return (f"#{issue_number}", "--", "--", "--", "FAILED (see detail section)")
+    return (f"#{issue_number}", "--", "--", "--", "--", "FAILED (see detail section)")
 
 
 def error_markdown(issue_number, error):
-    return f"## Issue #{issue_number}: FAILED\n\nCould not check this issue: {error}\n"
+    return f"### #{issue_number} \u2014 FAILED\n\nCould not check this issue: {error}\n"
 
 
 def build_summary_table(rows):
     header = (
-        f"| Issue | Enhancement owner (KEP PR author) | Target stage for {TARGET_MILESTONE} "
+        f"| Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for {TARGET_MILESTONE} "
         f"| In {TARGET_MILESTONE} milestone | Recommended {TARGET_MILESTONE} tracking board status |"
     )
-    sep = "|---|---|---|---|---|"
-    body = "\n".join(f"| {a} | {b} | {c} | {d} | {e} |" for a, b, c, d, e in rows)
+    sep = "|---|---|---|---|---|---|"
+    body = "\n".join(f"| {a} | {b} | {c} | {d} | {e} | {f} |" for a, b, c, d, e, f in rows)
     return "\n".join([header, sep, body])
 
 
@@ -686,9 +805,55 @@ def write_report(doc):
 # Main
 # --------------------------------------------------------------------------
 
+def get_gh_scopes():
+    """Parse 'Token scopes: ...' out of `gh auth status` (which writes to
+    stderr, not stdout)."""
+    out = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
+    combined = out.stdout + out.stderr
+    m = re.search(r"Token scopes:\s*(.+)", combined)
+    if not m:
+        return set()
+    return {s.strip().strip("'\"") for s in m.group(1).split(",")}
+
+
+def run_preflight():
+    """Check gh auth scope and v1.38 tracking board access, and print the
+    resolved release dates -- run this before asking the user what to
+    check, per this skill's design. Returns True if everything's usable."""
+    ok = True
+
+    scopes = get_gh_scopes()
+    if "project" in scopes or "read:project" in scopes:
+        print(f"OK   gh token has project scope (scopes: {', '.join(sorted(scopes)) or 'none'})")
+    else:
+        print(f"FAIL gh token is missing the `project` scope (scopes: {', '.join(sorted(scopes)) or 'none'})")
+        print("     Fix: run `gh auth refresh -s read:project` (interactive; opens a browser flow).")
+        ok = False
+
+    if ok:
+        try:
+            items = fetch_project_items()
+            print(f"OK   v1.38 tracking board (project {PROJECT_NUMBER}) is readable -- {len(items)} item(s) found.")
+        except RuntimeError as e:
+            print(f"FAIL could not read the v1.38 tracking board: {e}")
+            ok = False
+
+    kep_when, kep_utc, freeze_when = load_release_deadlines()
+    print(f"KEP Readiness Deadline: {kep_when}")
+    print(f"Enhancements Freeze:    {freeze_when}")
+    print()
+    print("All checks passed -- ready to take input." if ok else "Preflight FAILED -- fix the above before proceeding.")
+    return ok
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Check KEP readiness for one or more kubernetes/enhancements issues.",
+    )
+    parser.add_argument(
+        "--preflight", action="store_true",
+        help="Check gh auth scope and v1.38 tracking board access, print the result, and exit "
+             "(no issue is checked). Run this before asking the user what to review.",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -706,6 +871,8 @@ def parse_args():
         help="One or more kubernetes/enhancements issue numbers.",
     )
     args = parser.parse_args()
+    if args.preflight:
+        return args
     if not args.contact and not args.sig and not args.issue_numbers:
         parser.error("provide issue number(s), or --contact <github-handle>, or --sig <sig-name>")
     if (args.contact or args.sig) and args.issue_numbers:
@@ -714,7 +881,13 @@ def parse_args():
 
 
 def main():
+    global KEP_READINESS_DEADLINE, KEP_READINESS_DEADLINE_UTC, ENHANCEMENTS_FREEZE
     args = parse_args()
+
+    if args.preflight:
+        sys.exit(0 if run_preflight() else 1)
+
+    KEP_READINESS_DEADLINE, KEP_READINESS_DEADLINE_UTC, ENHANCEMENTS_FREEZE = load_release_deadlines()
 
     if args.contact:
         try:
