@@ -354,15 +354,17 @@ With all the KEP readiness (formerly named PRR freeze) requirements in place, th
 ## 9. Output Format
 
 **The script writes a Markdown file — it does not print the report to the
-terminal.** Each run writes `report/kep-readiness-<UTC-timestamp>.md`
-(creating `report/` if needed) and never overwrites a previous run's
-file — `write_report()` never opens an existing path for writing; if the
+terminal.** Each run writes `kep-readiness-<UTC-timestamp>.md` to the
+current working directory (the repo root, alongside `README.md` — the
+skill's usage instructions have the user `cd` there before starting
+Claude Code) and never overwrites a previous run's file —
+`write_report()` never opens an existing path for writing; if the
 timestamp alone (second granularity) would collide with an existing file
 (e.g. two runs within the same second), it appends `-1`, `-2`, etc. until
 it finds an unused name. The terminal only gets a short pointer, e.g.:
 
 ```
-Report written to: report/kep-readiness-20260919T183007Z.md
+Report written to: kep-readiness-20260919T183007Z.md
 View the summary table and full draft comment(s) there (3 issue(s) checked).
 ```
 
@@ -453,9 +455,8 @@ sign-off every time, not just a one-time approval.
   it, but the preflight step still expects it per Section 1.
 - PyYAML (`python3 -c "import yaml"` to check; `pip3 install pyyaml` if
   missing).
-- Write access to `report/` under the cwd (the script creates the
-  directory if it doesn't exist). `report/` is gitignored — reports are
-  working output, not something to commit.
+- Write access to the current working directory (expected to be the repo
+  root, alongside `README.md`) — the script writes the report file there.
 
 ## Updating for a new release cycle
 
