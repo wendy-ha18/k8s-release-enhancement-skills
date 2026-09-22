@@ -794,9 +794,18 @@ def build_report_document(issue_numbers, rows, sections, input_description):
 
 
 def write_report(doc):
+    """Always write a new file, never overwrite a previous run's report.
+    The timestamp alone (second granularity) could collide if two runs
+    happen within the same second -- fall back to a numeric suffix rather
+    than ever opening an existing path for writing."""
     os.makedirs("report", exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = os.path.join("report", f"kep-readiness-{timestamp}.md")
+    base = f"kep-readiness-{timestamp}"
+    path = os.path.join("report", f"{base}.md")
+    suffix = 1
+    while os.path.exists(path):
+        path = os.path.join("report", f"{base}-{suffix}.md")
+        suffix += 1
     with open(path, "w") as f:
         f.write(doc)
     return path

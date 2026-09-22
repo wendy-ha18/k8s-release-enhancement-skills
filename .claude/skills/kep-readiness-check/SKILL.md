@@ -356,7 +356,10 @@ With all the KEP readiness (formerly named PRR freeze) requirements in place, th
 **The script writes a Markdown file — it does not print the report to the
 terminal.** Each run writes `report/kep-readiness-<UTC-timestamp>.md`
 (creating `report/` if needed) and never overwrites a previous run's
-file. The terminal only gets a short pointer, e.g.:
+file — `write_report()` never opens an existing path for writing; if the
+timestamp alone (second granularity) would collide with an existing file
+(e.g. two runs within the same second), it appends `-1`, `-2`, etc. until
+it finds an unused name. The terminal only gets a short pointer, e.g.:
 
 ```
 Report written to: report/kep-readiness-20260919T183007Z.md
