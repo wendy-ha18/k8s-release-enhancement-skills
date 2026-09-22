@@ -43,5 +43,6 @@ You can also include the request directly:
 /kep-readiness-check check all KEPs for sig-network
 ```
 
-The generated Markdown report is written to `report/`. Review every draft
-before posting it to GitHub.
+The generated Markdown report is written to the repository root (same
+level as this repo's top-level `README.md`). Review every draft before
+posting it to GitHub.
