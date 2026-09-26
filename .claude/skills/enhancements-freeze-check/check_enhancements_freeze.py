@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Check KEP readiness (formerly "PRR freeze") for a kubernetes/enhancements
-tracking issue, and draft the reminder comment to post on it.
+Check Enhancements Freeze readiness for a kubernetes/enhancements tracking
+issue, and draft the reminder comment to post on it.
 
 Usage:
-    python3 check_kep_readiness.py <issue-number>
+    python3 check_enhancements_freeze.py <issue-number>
 
 Requires: `gh` CLI, authenticated (gh auth status), and PyYAML.
 Only reads from GitHub (kubernetes/enhancements + the KEP author's fork if
@@ -25,26 +25,17 @@ REPO = "kubernetes/enhancements"
 SIG_RELEASE_REPO = "kubernetes/sig-release"
 TARGET_MILESTONE = "v1.38"
 
-# Fallback deadline info, used only if the live fetch from kubernetes/sig-release
-# (load_release_deadlines(), called once at the top of main()) fails or can't be
-# parsed -- e.g. no network, or the release doc's format changed. Keeping these
-# in sync with reality is a nice-to-have now, not a hard requirement, since the
-# live fetch is what actually drives behavior; TARGET_MILESTONE above is the one
-# thing that still needs a manual update each cycle (see "Updating for a new
-# release cycle").
-KEP_READINESS_DEADLINE_FALLBACK = (
-    "Tuesday 22nd September 2026 (AoE) / Wednesday 23th September 2026 12:00 UTC"
-)
-KEP_READINESS_DEADLINE_UTC_FALLBACK = datetime(2026, 9, 23, 12, 0, tzinfo=timezone.utc)
+# Used only when the live release timeline cannot be fetched or parsed.
 ENHANCEMENTS_FREEZE_FALLBACK = (
     "Tuesday 29th September 2026 (AoE) / Wednesday 30th September 2026 12:00 UTC"
 )
+ENHANCEMENTS_FREEZE_UTC_FALLBACK = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
 
-# Populated by load_release_deadlines() at the start of main() -- module-level
-# so the existing f-string references throughout this file keep working.
-KEP_READINESS_DEADLINE = KEP_READINESS_DEADLINE_FALLBACK
-KEP_READINESS_DEADLINE_UTC = KEP_READINESS_DEADLINE_UTC_FALLBACK
 ENHANCEMENTS_FREEZE = ENHANCEMENTS_FREEZE_FALLBACK
+ENHANCEMENTS_FREEZE_UTC = ENHANCEMENTS_FREEZE_UTC_FALLBACK
+# Kept only for the inherited readiness renderer retained below as reference.
+KEP_READINESS_DEADLINE = ""
+KEP_READINESS_DEADLINE_UTC = datetime.min.replace(tzinfo=timezone.utc)
 
 MONTH_NUMBERS = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
@@ -71,6 +62,26 @@ QUESTIONNAIRE_REQUIRED_SECTIONS = {
 }
 
 PLACEHOLDER_MARKERS = ["to be completed"]
+
+LATEST_TEMPLATE_H2_SECTIONS = {
+    "release signoff checklist",
+    "summary",
+    "motivation",
+    "proposal",
+    "design details",
+    "production readiness review questionnaire",
+    "implementation history",
+    "drawbacks",
+    "alternatives",
+}
+
+CONTENT_PLACEHOLDER_PATTERNS = (
+    r"\bTBD\b",
+    r"\bTODO\b",
+    r"\bMyCoolFeature\b",
+    r"\btest name\b",
+    r"sig-\.\.\.",
+)
 
 PR_FIELDS = "number,state,mergedAt,author,headRefName,headRepository,files,url,createdAt"
 
@@ -162,10 +173,7 @@ def last_merged_pr_for_path(path):
 
 
 # --------------------------------------------------------------------------
-# Fetching the KEP Readiness Deadline and Enhancements Freeze dates live from
-# kubernetes/sig-release, instead of relying on hardcoded constants that need
-# a manual update every release cycle. Falls back to the *_FALLBACK constants
-# above if the page can't be fetched or its format has changed.
+# Fetch the Enhancements Freeze date live from kubernetes/sig-release.
 # --------------------------------------------------------------------------
 
 def extract_timeline_row(text, keyword):
@@ -210,39 +218,34 @@ def parse_utc_datetime_from_when(when_text):
         return None
 
 
-def load_release_deadlines():
-    """Return (kep_readiness_deadline_str, kep_readiness_deadline_utc,
-    enhancements_freeze_str), fetched live from the current release's
-    README on kubernetes/sig-release. Falls back to the hardcoded
-    *_FALLBACK constants (with a note printed to stderr) if the fetch or
-    parse fails for any reason -- this must never raise and block a run."""
+def load_enhancements_freeze():
+    """Return (display string, UTC datetime) from the current release README.
+
+    Fall back to the bundled value if the live document is unavailable or its
+    format changes; a reporting run should not fail solely because its deadline
+    source is temporarily unavailable.
+    """
     release_number = TARGET_MILESTONE.lstrip("vV")
     path = f"releases/release-{release_number}/README.md"
     try:
         text = fetch_file(SIG_RELEASE_REPO, path)
         if text is None:
             raise RuntimeError(f"{SIG_RELEASE_REPO}/{path} not found")
-        kep_row = extract_timeline_row(text, "KEP Readiness Deadline")
         freeze_row = extract_timeline_row(text, "Enhancements Freeze")
-        if not kep_row:
-            raise RuntimeError("could not find the 'KEP Readiness Deadline' row in the Timeline table")
-        kep_when = kep_row[2].strip("*")
-        kep_utc = parse_utc_datetime_from_when(kep_when)
-        if kep_utc is None:
-            raise RuntimeError(f"could not parse a UTC datetime out of: {kep_when!r}")
-        freeze_when = freeze_row[2].strip("*") if freeze_row else ENHANCEMENTS_FREEZE_FALLBACK
-        return kep_when, kep_utc, freeze_when
+        if not freeze_row:
+            raise RuntimeError("could not find the 'Enhancements Freeze' row in the Timeline table")
+        freeze_when = freeze_row[2].strip("*")
+        freeze_utc = parse_utc_datetime_from_when(freeze_when)
+        if freeze_utc is None:
+            raise RuntimeError(f"could not parse a UTC datetime out of: {freeze_when!r}")
+        return freeze_when, freeze_utc
     except RuntimeError as e:
         print(
             f"warning: could not load live release dates from {SIG_RELEASE_REPO}/{path} "
             f"({e}) -- falling back to hardcoded dates, which may be stale.",
             file=sys.stderr,
         )
-        return (
-            KEP_READINESS_DEADLINE_FALLBACK,
-            KEP_READINESS_DEADLINE_UTC_FALLBACK,
-            ENHANCEMENTS_FREEZE_FALLBACK,
-        )
+        return ENHANCEMENTS_FREEZE_FALLBACK, ENHANCEMENTS_FREEZE_UTC_FALLBACK
 
 
 # --------------------------------------------------------------------------
@@ -473,7 +476,7 @@ def resolve_issues_by_sig(sig):
 
 
 # --------------------------------------------------------------------------
-# kep.yaml / PRR approval file / PRR questionnaire checks
+# Enhancements Freeze checks
 # --------------------------------------------------------------------------
 
 def norm_version(v):
@@ -481,42 +484,84 @@ def norm_version(v):
     return str(v or "").strip().lstrip("vV")
 
 
-def check_kep_yaml(content, stage, target_milestone, is_graduating):
-    """Validate kep.yaml against the KEP Readiness requirements in
-    https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#prr-freeze:
-
-        - `stage` set to the current stage
-        - `latest-milestone` set to the current release
-        - `milestone` struct updated with the current stage and release
-          (ONLY IF graduating to a new stage)
-
-    `is_graduating` tells us whether `stage` actually changed relative to
-    what's currently merged -- if the KEP is just continuing at the same
-    stage as last release, `milestone.<stage>` is allowed to still show the
-    older release when that stage was first reached, per the policy above.
-    """
+def check_kep_yaml(content, stage, target_milestone):
+    """Validate the merged kep.yaml requirements for Enhancements Freeze."""
     try:
         data = yaml.safe_load(content) or {}
     except (yaml.YAMLError, ValueError) as e:
         return [f"kep.yaml failed to parse: {e}"]
+
     problems = []
-    if data.get("stage") != stage:
-        problems.append(f"`stage` is `{data.get('stage')}`, expected `{stage}`")
+    status = data.get("status")
+    yaml_stage = data.get("stage")
+    deprecation_stages = {"deprecated", "disabled", "removed"}
+    withdrawn_deprecation = status == "withdrawn" and yaml_stage in deprecation_stages
+    allowed_statuses = {"implementable"}
+    if stage == "stable":
+        # A stable KEP may already be implemented if its code merged early.
+        allowed_statuses.add("implemented")
+    if status not in allowed_statuses and not withdrawn_deprecation:
+        expected = "`implementable` (or `withdrawn` for a deprecation/removal)"
+        if stage == "stable":
+            expected += "; `implemented` is also accepted for stable KEPs"
+        problems.append(f"`status` is `{status}`, expected {expected}")
+    if not withdrawn_deprecation and yaml_stage != stage:
+        problems.append(f"`stage` is `{yaml_stage}`, expected `{stage}`")
     if norm_version(data.get("latest-milestone")) != norm_version(target_milestone):
         problems.append(
             f"`latest-milestone` is `{data.get('latest-milestone')}`, expected `{target_milestone}`"
         )
-    if is_graduating:
-        milestone_struct = data.get("milestone") or {}
-        stage_milestone = milestone_struct.get(stage)
-        if norm_version(stage_milestone) != norm_version(target_milestone):
-            problems.append(
-                f"`milestone.{stage}` is `{stage_milestone}`, expected `{target_milestone}` "
-                f"(this KEP appears to be graduating to {stage} this cycle)"
-            )
-    # else: per release_phases.md, `milestone.<stage>` only needs to be
-    # updated when graduating to a new stage -- no check when staying put.
+    milestone_struct = data.get("milestone") or {}
+    if not milestone_struct.get(stage):
+        problems.append(f"`milestone.{stage}` is missing")
     return problems
+
+
+def markdown_h2_sections(text):
+    return {
+        re.sub(r"\s+\(optional\)\s*$", "", heading.strip(), flags=re.I).lower()
+        for heading in re.findall(r"^##\s+(.+?)\s*$", text, flags=re.M)
+    }
+
+
+def check_latest_template(readme_text):
+    """Heuristically check that the merged README has current template sections."""
+    missing = sorted(LATEST_TEMPLATE_H2_SECTIONS - markdown_h2_sections(readme_text))
+    return [f"missing current template section `## {name.title()}`" for name in missing]
+
+
+def extract_markdown_section(text, heading):
+    """Return a Markdown section body for a heading at any level."""
+    pattern = re.compile(rf"^(?P<marks>#+)\s+{re.escape(heading)}\s*$", re.I | re.M)
+    match = pattern.search(text)
+    if not match:
+        return None
+    level = len(match.group("marks"))
+    rest = text[match.end():]
+    next_heading = re.search(rf"^#{{1,{level}}}\s+", rest, flags=re.M)
+    return rest[:next_heading.start()] if next_heading else rest
+
+
+def check_substantive_section(readme_text, heading):
+    """Flag a missing, empty, or obviously template-only section.
+
+    This is intentionally reported as a heuristic: whether graduation criteria
+    and a test plan are genuinely current still requires human review.
+    """
+    section = extract_markdown_section(readme_text, heading)
+    if section is None:
+        return [f"`{heading}` section not found"]
+    cleaned = strip_html_comments(section)
+    cleaned = "\n".join(
+        line for line in cleaned.splitlines()
+        if not re.match(r"^\s*#+\s+", line)
+    ).strip()
+    if not cleaned:
+        return [f"`{heading}` section is empty"]
+    markers = [pattern for pattern in CONTENT_PLACEHOLDER_PATTERNS if re.search(pattern, cleaned, re.I)]
+    if markers:
+        return [f"`{heading}` still contains template placeholder content"]
+    return []
 
 
 def check_prr_approval(content, stage):
@@ -621,7 +666,7 @@ def md_escape_cell(s):
     return (s or "").replace("|", "\\|").replace("\n", " ").strip()
 
 
-def decide_status(all_ok, past_deadline):
+def _readiness_decide_status(all_ok, past_deadline):
     if all_ok:
         return "Tracked for KEP readiness"
     if past_deadline:
@@ -629,7 +674,7 @@ def decide_status(all_ok, past_deadline):
     return "At risk for KEP readiness"
 
 
-def render_issue_markdown(result):
+def _render_readiness_issue_markdown(result):
     """Return (decision, markdown_block) for one successfully-checked issue."""
     issue = result["issue"]
     owner_login = result["owner_login"]
@@ -643,7 +688,7 @@ def render_issue_markdown(result):
     all_ok = result["all_ok"]
 
     past_deadline = datetime.now(timezone.utc) >= KEP_READINESS_DEADLINE_UTC
-    decision = decide_status(all_ok, past_deadline)
+    decision = _readiness_decide_status(all_ok, past_deadline)
 
     owner_mention = f"@{owner_login}" if owner_login else "{enhancement owner}"
     stage_display = target_stage or "{stage}"
@@ -747,6 +792,130 @@ If you anticipate missing KEP readiness (formerly named PRR freeze), you can fil
     return decision, "\n".join(lines)
 
 
+# The readiness script above is the behavioral baseline this skill was derived
+# from. Freeze reports use this phase-specific renderer.
+def decide_status(all_ok, past_deadline):
+    if all_ok:
+        return "Tracked for enhancements freeze"
+    if past_deadline:
+        return "Removed from Milestone"
+    return "At risk for enhancements freeze"
+
+
+def render_issue_markdown(result):
+    """Render one result using comm-template/enhancement-freeze.md wording."""
+    issue = result["issue"]
+    owner_login = result["owner_login"]
+    target_stage = result["target_stage"]
+    action_items = result["action_items"]
+    checks = result["checks"]
+    all_ok = result["all_ok"]
+    past_deadline = datetime.now(timezone.utc) >= ENHANCEMENTS_FREEZE_UTC
+    decision = decide_status(all_ok, past_deadline)
+
+    owner_mention = f"@{owner_login}" if owner_login else "{enhancement owner}"
+    stage_display = target_stage or "{stage}"
+    bullet_items = "\n".join(f"- {item}" for item in action_items) or "- (see status above)"
+    intro = (
+        f"This enhancement is targeting stage `{stage_display}` for {TARGET_MILESTONE} "
+        "(correct me, if otherwise)"
+    )
+    checklist = f"""\
+- [{checkbox(checks['readme_template'])}] KEP readme using the [latest template](https://github.com/kubernetes/enhancements/tree/master/keps/NNNN-kep-template) has been merged into the k/enhancements repo.
+- [{checkbox(checks['kep_yaml'])}] KEP status is marked as `implementable` for `latest-milestone: {TARGET_MILESTONE}`.
+- [{checkbox(checks['graduation_criteria'])}] KEP readme has up-to-date graduation criteria.
+- [{checkbox(checks['test_plan'])}] KEP readme has an updated detailed test plan.
+- [{checkbox(checks['prr'])}] KEP has a production readiness review that has been completed and merged into k/enhancements. (For more information on the PRR process, check [here](https://github.com/kubernetes/community/blob/master/sig-architecture/production-readiness.md#submitting-a-kep-for-production-readiness-approval)).
+- [{checkbox(checks['no_open_metadata_prs'])}] There are no other outstanding (unmerged) PRs that modify the KEP readme or kep.yaml file."""
+
+    if all_ok:
+        comment = f"""\
+Hello {owner_mention} :wave:, {TARGET_MILESTONE} Enhancements team here.
+
+Just checking in as we approach [enhancements freeze](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#enhancements-freeze) on **{ENHANCEMENTS_FREEZE}**.
+
+{intro}
+
+Here's where this enhancement currently stands:
+
+{checklist}
+
+With all the KEP requirements in place and merged into k/enhancements, this enhancement is all good for the upcoming enhancements freeze. :rocket:
+
+The status of this enhancement is marked as `Tracked for enhancements freeze`. Please keep the issue description up-to-date with appropriate stages as well. Thank you!
+
+/label tracked/yes"""
+    elif past_deadline:
+        comment = f"""\
+Hello {owner_mention} :wave:, {TARGET_MILESTONE} Enhancements team here.
+
+This is a follow-up on [enhancements freeze](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#enhancements-freeze), which passed on **{ENHANCEMENTS_FREEZE}**.
+
+This enhancement was targeting stage `{stage_display}` for {TARGET_MILESTONE} (correct me, if otherwise).
+
+Here's where this enhancement currently stands:
+
+{checklist}
+
+The following requirements were still outstanding at the deadline:
+{bullet_items}
+
+Per the [Enhancements Freeze policy](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#enhancements-freeze), an enhancement that does not meet these requirements is removed from the milestone and requires an exception. This enhancement is now marked as `Removed from Milestone` for {TARGET_MILESTONE}.
+
+If you would like this enhancement to remain in the {TARGET_MILESTONE} milestone, please file an [exception request](https://github.com/kubernetes/sig-release/blob/master/releases/EXCEPTIONS.md) as soon as possible. Thank you!"""
+    else:
+        comment = f"""\
+Hello {owner_mention} :wave:, {TARGET_MILESTONE} Enhancements team here.
+
+Just checking in as we approach [enhancements freeze](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#enhancements-freeze) on **{ENHANCEMENTS_FREEZE}**.
+
+{intro}
+
+Here's where this enhancement currently stands:
+
+{checklist}
+
+For this KEP, we would just need to update the following:
+{bullet_items}
+
+The status of this enhancement is marked as `At risk for enhancements freeze`. Please keep the issue description up-to-date with appropriate stages as well.
+
+If you anticipate missing enhancements freeze, you can file an [exception request](https://github.com/kubernetes/sig-release/blob/master/releases/EXCEPTIONS.md) in advance. Thank you!"""
+
+    row = summary_row(result, decision)
+    lines = [
+        f"### #{issue['number']} — {issue['title']}",
+        "",
+        "**Summary**",
+        "",
+        build_summary_table([row]),
+        "",
+        "**Enhancements Freeze**",
+        "",
+        f"- KEP README merged and latest template: {'✅' if checks['readme_template'] else '❌'}",
+        f"- `kep.yaml` merged and current: {'✅' if checks['kep_yaml'] else '❌'}",
+        f"- Graduation Criteria: {'✅' if checks['graduation_criteria'] else '❌'}",
+        f"- Test Plan: {'✅' if checks['test_plan'] else '❌'}",
+        f"- Production Readiness Review: {'✅' if checks['prr'] else '❌'}",
+        f"- No outstanding KEP metadata PRs: {'✅' if checks['no_open_metadata_prs'] else '❌'}",
+        "",
+        "**Outstanding actions**",
+        "",
+    ]
+    lines += [f"- {item}" for item in action_items] if action_items else ["- None -- all criteria met."]
+    lines += [
+        "",
+        "**Draft GitHub comment**",
+        "",
+        "*(review before posting -- do not auto-post)*",
+        "",
+        "```markdown",
+        comment,
+        "```",
+    ]
+    return decision, "\n".join(lines)
+
+
 def summary_row(result, decision):
     issue = result["issue"]
     title = md_escape_cell(issue["title"])
@@ -779,7 +948,7 @@ def build_summary_table(rows):
 def build_report_document(issue_numbers, rows, sections, input_description):
     generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     header = "\n".join([
-        f"# KEP Readiness Report -- {TARGET_MILESTONE}",
+        f"# Enhancements Freeze Report -- {TARGET_MILESTONE}",
         "",
         f"Generated: {generated}",
         f"Issues checked: {len(issue_numbers)}",
@@ -806,7 +975,7 @@ def write_report(doc):
     than ever opening an existing path for writing."""
     os.makedirs(REPORT_DIR, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    base = f"kep-readiness-{timestamp}"
+    base = f"enhancements-freeze-{timestamp}"
     path = os.path.join(REPORT_DIR, f"{base}.md")
     suffix = 1
     while os.path.exists(path):
@@ -833,9 +1002,7 @@ def get_gh_scopes():
 
 
 def run_preflight():
-    """Check gh auth scope and v1.38 tracking board access, and print the
-    resolved release dates -- run this before asking the user what to
-    check, per this skill's design. Returns True if everything's usable."""
+    """Check auth, board access, and the live Enhancements Freeze date."""
     ok = True
 
     scopes = get_gh_scopes()
@@ -854,9 +1021,8 @@ def run_preflight():
             print(f"FAIL could not read the v1.38 tracking board: {e}")
             ok = False
 
-    kep_when, kep_utc, freeze_when = load_release_deadlines()
-    print(f"KEP Readiness Deadline: {kep_when}")
-    print(f"Enhancements Freeze:    {freeze_when}")
+    freeze_when, _freeze_utc = load_enhancements_freeze()
+    print(f"Enhancements Freeze: {freeze_when}")
     print()
     print("All checks passed -- ready to take input." if ok else "Preflight FAILED -- fix the above before proceeding.")
     return ok
@@ -864,7 +1030,7 @@ def run_preflight():
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Check KEP readiness for one or more kubernetes/enhancements issues.",
+        description="Check Enhancements Freeze readiness for kubernetes/enhancements issues.",
     )
     parser.add_argument(
         "--preflight", action="store_true",
@@ -897,13 +1063,13 @@ def parse_args():
 
 
 def main():
-    global KEP_READINESS_DEADLINE, KEP_READINESS_DEADLINE_UTC, ENHANCEMENTS_FREEZE
+    global ENHANCEMENTS_FREEZE, ENHANCEMENTS_FREEZE_UTC
     args = parse_args()
 
     if args.preflight:
         sys.exit(0 if run_preflight() else 1)
 
-    KEP_READINESS_DEADLINE, KEP_READINESS_DEADLINE_UTC, ENHANCEMENTS_FREEZE = load_release_deadlines()
+    ENHANCEMENTS_FREEZE, ENHANCEMENTS_FREEZE_UTC = load_enhancements_freeze()
 
     if args.contact:
         handle = args.contact.lstrip("@")
@@ -960,7 +1126,7 @@ def main():
     sys.exit(exit_code)
 
 
-def check_issue(issue_number):
+def _check_kep_readiness_issue(issue_number):
     issue = gh_json(
         "issue", "view", issue_number, "--repo", REPO,
         "--json", "number,title,labels,milestone,state,url,body",
@@ -1121,6 +1287,179 @@ def check_issue(issue_number):
         "questionnaire_ok": questionnaire_ok,
         "kep_yaml_ok": kep_yaml_ok,
         "prr_approval_ok": prr_approval_ok,
+        "kep_pr_url": kep_pr_url,
+        "milestone_ok": milestone_ok,
+        "all_ok": all_ok,
+    }
+
+
+def check_issue(issue_number):
+    """Check the merged state required by the Enhancements Freeze policy."""
+    issue = gh_json(
+        "issue", "view", issue_number, "--repo", REPO,
+        "--json", "number,title,labels,milestone,state,url,body",
+    )
+    labels = [label["name"] for label in issue["labels"]]
+    milestone_title = (issue.get("milestone") or {}).get("title")
+    milestone_ok = milestone_title == TARGET_MILESTONE
+    lead_opted_in = "lead-opted-in" in labels
+    stage_labels = [label for label in labels if label.startswith("stage/")]
+
+    action_items = []
+    if not milestone_ok:
+        action_items.append(
+            f"Issue is not in the **{TARGET_MILESTONE}** milestone "
+            f"(currently: `{milestone_title or 'none'}`)."
+        )
+    if not lead_opted_in:
+        action_items.append("Missing the `lead-opted-in` label.")
+
+    target_stage = None
+    if len(stage_labels) == 1:
+        target_stage = stage_labels[0].split("/", 1)[1]
+    elif not stage_labels:
+        action_items.append(
+            "No `stage/{alpha,beta,stable}` label on the issue -- can't determine target stage."
+        )
+    else:
+        action_items.append(f"Multiple stage labels found ({stage_labels}); expected exactly one.")
+
+    checks = {
+        "readme_template": False,
+        "kep_yaml": False,
+        "graduation_criteria": False,
+        "test_plan": False,
+        "prr": False,
+        "no_open_metadata_prs": False,
+    }
+    owner_login = None
+    kep_pr_url = None
+
+    confirmed_pr, other_confirmed = find_kep_pr(issue_number, issue.get("body") or "")
+    open_prs = ([confirmed_pr] if confirmed_pr else []) + other_confirmed
+    metadata_path = re.compile(
+        rf"^keps/[^/]+/{re.escape(str(issue_number))}-[^/]+/(README\.md|kep\.yaml)$"
+    )
+    metadata_prs = [
+        pr for pr in open_prs
+        if any(metadata_path.match(file["path"]) for file in pr.get("files", []))
+    ]
+    if metadata_prs:
+        links = ", ".join(f"[#{pr['number']}]({pr['url']})" for pr in metadata_prs)
+        action_items.append(
+            f"Merge or close outstanding PR(s) that modify the KEP README or `kep.yaml`: {links}."
+        )
+        if confirmed_pr:
+            owner_login = (confirmed_pr.get("author") or {}).get("login")
+            kep_pr_url = confirmed_pr.get("url")
+    else:
+        checks["no_open_metadata_prs"] = True
+
+    tree = fetch_master_tree()
+    kep_dir, sig = find_kep_dir_on_master(tree, issue_number)
+    if kep_dir is None:
+        action_items.append(
+            "Could not locate a merged KEP directory (`keps/<sig>/<number>-*/`) on master."
+        )
+    else:
+        kep_yaml_path = f"{kep_dir}/kep.yaml"
+        readme_path = f"{kep_dir}/README.md"
+        prr_path = f"keps/prod-readiness/{sig}/{issue_number}.yaml"
+
+        merged_owner, merged_pr_url = last_merged_pr_for_path(kep_yaml_path)
+        owner_login = merged_owner or owner_login
+        kep_pr_url = merged_pr_url or kep_pr_url
+
+        kep_yaml_content = fetch_file(REPO, kep_yaml_path)
+        if kep_yaml_content is None:
+            action_items.append(f"`kep.yaml` is not merged at `{kep_yaml_path}`.")
+        elif target_stage is None:
+            action_items.append("Can't validate `kep.yaml` without a known target stage.")
+        else:
+            problems = check_kep_yaml(kep_yaml_content, target_stage, TARGET_MILESTONE)
+            if problems:
+                action_items.append("Merge the required `kep.yaml` updates -- " + "; ".join(problems) + ".")
+            else:
+                checks["kep_yaml"] = True
+
+        readme_content = fetch_file(REPO, readme_path)
+        questionnaire_ok = False
+        if readme_content is None:
+            action_items.append(f"KEP README is not merged at `{readme_path}`.")
+        else:
+            template_problems = check_latest_template(readme_content)
+            if template_problems:
+                action_items.append(
+                    "Update the merged KEP README to the latest template "
+                    "(heading-based heuristic) -- " + "; ".join(template_problems) + "."
+                )
+            else:
+                checks["readme_template"] = True
+
+            graduation_problems = check_substantive_section(readme_content, "Graduation Criteria")
+            if graduation_problems:
+                action_items.append(
+                    "Update Graduation Criteria (heuristic; verify manually) -- "
+                    + "; ".join(graduation_problems) + "."
+                )
+            else:
+                checks["graduation_criteria"] = True
+
+            test_plan_problems = check_substantive_section(readme_content, "Test Plan")
+            if test_plan_problems:
+                action_items.append(
+                    "Complete the detailed Test Plan (heuristic; verify manually) -- "
+                    + "; ".join(test_plan_problems) + "."
+                )
+            else:
+                checks["test_plan"] = True
+
+            if target_stage is None:
+                action_items.append("Can't validate the PRR questionnaire without a known target stage.")
+            else:
+                prr_section = extract_readme_prr_section(readme_content)
+                if prr_section is None:
+                    action_items.append(
+                        "Could not find the `## Production Readiness Review Questionnaire` section."
+                    )
+                else:
+                    unanswered = check_questionnaire(prr_section, target_stage)
+                    if unanswered:
+                        action_items.append(
+                            "Complete and merge the PRR questionnaire -- still unanswered "
+                            "(heuristic; verify manually): " + ", ".join(unanswered) + "."
+                        )
+                    else:
+                        questionnaire_ok = True
+
+        approval_ok = False
+        prr_content = fetch_file(REPO, prr_path)
+        if prr_content is None:
+            action_items.append(f"Merge the PRR approval file at `{prr_path}`.")
+        elif target_stage is None:
+            action_items.append("Can't validate the PRR approval file without a known target stage.")
+        else:
+            problems = check_prr_approval(prr_content, target_stage)
+            if problems:
+                action_items.append(
+                    "Complete and merge the PRR approval -- " + "; ".join(problems) + "."
+                )
+            else:
+                approval_ok = True
+        checks["prr"] = questionnaire_ok and approval_ok
+
+    all_ok = (
+        milestone_ok
+        and lead_opted_in
+        and target_stage is not None
+        and all(checks.values())
+    )
+    return {
+        "issue": issue,
+        "owner_login": owner_login,
+        "target_stage": target_stage,
+        "action_items": action_items,
+        "checks": checks,
         "kep_pr_url": kep_pr_url,
         "milestone_ok": milestone_ok,
         "all_ok": all_ok,
