@@ -1,6 +1,6 @@
 # Enhancements Freeze Report -- v1.38
 
-Generated: 2026-09-26 13:24 UTC
+Generated: 2026-09-26 13:42 UTC
 Issues checked: 16
 Generate draft reminder comment for Enhancement Contact @wendy-ha18.
 
@@ -8,21 +8,21 @@ Generate draft reminder comment for Enhancement Contact @wendy-ha18.
 
 | Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for v1.38 | In v1.38 milestone | Recommended v1.38 tracking board status |
 |---|---|---|---|---|---|
-| [#2535](https://github.com/kubernetes/enhancements/issues/2535) Ensure secret pulled images | [PR #6267](https://github.com/kubernetes/enhancements/pull/6267) | @SergeyKanzhelev | beta | NO | At risk for enhancements freeze |
-| [#4563](https://github.com/kubernetes/enhancements/issues/4563) EvictionRequest API | -- | @atiratree | alpha | yes | Tracked for enhancements freeze |
+| [#2535](https://github.com/kubernetes/enhancements/issues/2535) Ensure secret pulled images | [PR #6267](https://github.com/kubernetes/enhancements/pull/6267) | @stlaz | beta | NO | At risk for enhancements freeze |
+| [#4563](https://github.com/kubernetes/enhancements/issues/4563) EvictionRequest API | [PR #6405](https://github.com/kubernetes/enhancements/pull/6405) | @atiratree | alpha | yes | Tracked for enhancements freeze |
 | [#5517](https://github.com/kubernetes/enhancements/issues/5517) DRA: Node Allocatable Resource Requests | [PR #6324](https://github.com/kubernetes/enhancements/pull/6324) | @pravk03 | beta | yes | At risk for enhancements freeze |
-| [#5825](https://github.com/kubernetes/enhancements/issues/5825) CRI List Streaming | -- | @kubernetes-prow[bot] | beta | yes | Tracked for enhancements freeze |
-| [#5999](https://github.com/kubernetes/enhancements/issues/5999) HTTP/2 cleartext (h2c) for container probes | [PR #6338](https://github.com/kubernetes/enhancements/pull/6338) | @SergeyKanzhelev | beta | yes | At risk for enhancements freeze |
+| [#5825](https://github.com/kubernetes/enhancements/issues/5825) CRI List Streaming | [PR #6146](https://github.com/kubernetes/enhancements/pull/6146) | @bitoku | beta | yes | Tracked for enhancements freeze |
+| [#5999](https://github.com/kubernetes/enhancements/issues/5999) HTTP/2 cleartext (h2c) for container probes | [PR #6338](https://github.com/kubernetes/enhancements/pull/6338) | @amritansh1502 | beta | yes | At risk for enhancements freeze |
 | [#6147](https://github.com/kubernetes/enhancements/issues/6147) Dynamic node declared features Discovery | [PR #6148](https://github.com/kubernetes/enhancements/pull/6148) | @HirazawaUi | alpha | yes | At risk for enhancements freeze |
-| [#6032](https://github.com/kubernetes/enhancements/issues/6032) localhost NodePort userspace proxy for nftables | -- | @AustinAbro321 | beta | yes | Tracked for enhancements freeze |
-| [#6035](https://github.com/kubernetes/enhancements/issues/6035) Exec session identity propagation | [PR #6205](https://github.com/kubernetes/enhancements/pull/6205) | @SergeyKanzhelev | alpha | yes | At risk for enhancements freeze |
+| [#6032](https://github.com/kubernetes/enhancements/issues/6032) localhost NodePort userspace proxy for nftables | [PR #6378](https://github.com/kubernetes/enhancements/pull/6378) | @AustinAbro321 | beta | yes | Tracked for enhancements freeze |
+| [#6035](https://github.com/kubernetes/enhancements/issues/6035) Exec session identity propagation | [PR #6205](https://github.com/kubernetes/enhancements/pull/6205) | @nispriha | alpha | yes | At risk for enhancements freeze |
 | [#4958](https://github.com/kubernetes/enhancements/issues/4958) CSI Sidecars All in one | [PR #5672](https://github.com/kubernetes/enhancements/pull/5672) | @mowangdk | alpha | yes | At risk for enhancements freeze |
 | [#6089](https://github.com/kubernetes/enhancements/issues/6089) WAS: Controller Integration APIs | [PR #6342](https://github.com/kubernetes/enhancements/pull/6342) | @mm4tt | beta | yes | Tracked for enhancements freeze |
 | [#5598](https://github.com/kubernetes/enhancements/issues/5598) Opportunistic batching | [PR #6411](https://github.com/kubernetes/enhancements/pull/6411) | @romanbaron | beta | yes | At risk for enhancements freeze |
-| [#3541](https://github.com/kubernetes/enhancements/issues/3541) Add Recreate Update Strategy to StatefulSet | [PR #6155](https://github.com/kubernetes/enhancements/pull/6155) | @galal-hussein | beta | yes | At risk for enhancements freeze |
+| [#3541](https://github.com/kubernetes/enhancements/issues/3541) Add Recreate Update Strategy to StatefulSet | [PR #6360](https://github.com/kubernetes/enhancements/pull/6360) | @galal-hussein | beta | yes | At risk for enhancements freeze |
 | [#6249](https://github.com/kubernetes/enhancements/issues/6249) SLM: Publish Graceful Node Shutdown state for DaemonSet coordination | [PR #6351](https://github.com/kubernetes/enhancements/pull/6351) | @danbruno101 | alpha | yes | At risk for enhancements freeze |
 | [#5381](https://github.com/kubernetes/enhancements/issues/5381) Mutable PersistentVolume Node Affinity | [PR #6231](https://github.com/kubernetes/enhancements/pull/6231) | @huww98 | alpha | yes | At risk for enhancements freeze |
-| [#6361](https://github.com/kubernetes/enhancements/issues/6361) KEP: Controller Leader Election Recovery | -- | @jpbetz | UNKNOWN | yes | At risk for enhancements freeze |
+| [#6361](https://github.com/kubernetes/enhancements/issues/6361) KEP: Controller Leader Election Recovery | [PR #6365](https://github.com/kubernetes/enhancements/pull/6365) | @jpbetz | UNKNOWN | yes | At risk for enhancements freeze |
 | [#6386](https://github.com/kubernetes/enhancements/issues/6386) Introduce the ability to configure ephemeral storage at the pod level | [PR #6394](https://github.com/kubernetes/enhancements/pull/6394) | @ndixita | alpha | yes | At risk for enhancements freeze |
 
 ---
@@ -33,7 +33,7 @@ Generate draft reminder comment for Enhancement Contact @wendy-ha18.
 
 | Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for v1.38 | In v1.38 milestone | Recommended v1.38 tracking board status |
 |---|---|---|---|---|---|
-| [#2535](https://github.com/kubernetes/enhancements/issues/2535) Ensure secret pulled images | [PR #6267](https://github.com/kubernetes/enhancements/pull/6267) | @SergeyKanzhelev | beta | NO | At risk for enhancements freeze |
+| [#2535](https://github.com/kubernetes/enhancements/issues/2535) Ensure secret pulled images | [PR #6267](https://github.com/kubernetes/enhancements/pull/6267) | @stlaz | beta | NO | At risk for enhancements freeze |
 
 **Enhancements Freeze**
 
@@ -57,7 +57,7 @@ Generate draft reminder comment for Enhancement Contact @wendy-ha18.
 *(review before posting -- do not auto-post)*
 
 ```markdown
-Hello @SergeyKanzhelev :wave:, v1.38 Enhancements team here.
+Hello @stlaz :wave:, v1.38 Enhancements team here.
 
 Just checking in as we approach [enhancements freeze](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#enhancements-freeze) on **Tuesday 29th September 2026 (AoE) / Wednesday 30th September 2026 12:00 UTC**.
 
@@ -92,7 +92,7 @@ If you anticipate missing enhancements freeze, you can file an [exception reques
 
 | Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for v1.38 | In v1.38 milestone | Recommended v1.38 tracking board status |
 |---|---|---|---|---|---|
-| [#4563](https://github.com/kubernetes/enhancements/issues/4563) EvictionRequest API | -- | @atiratree | alpha | yes | Tracked for enhancements freeze |
+| [#4563](https://github.com/kubernetes/enhancements/issues/4563) EvictionRequest API | [PR #6405](https://github.com/kubernetes/enhancements/pull/6405) | @atiratree | alpha | yes | Tracked for enhancements freeze |
 
 **Enhancements Freeze**
 
@@ -199,7 +199,7 @@ If you anticipate missing enhancements freeze, you can file an [exception reques
 
 | Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for v1.38 | In v1.38 milestone | Recommended v1.38 tracking board status |
 |---|---|---|---|---|---|
-| [#5825](https://github.com/kubernetes/enhancements/issues/5825) CRI List Streaming | -- | @kubernetes-prow[bot] | beta | yes | Tracked for enhancements freeze |
+| [#5825](https://github.com/kubernetes/enhancements/issues/5825) CRI List Streaming | [PR #6146](https://github.com/kubernetes/enhancements/pull/6146) | @bitoku | beta | yes | Tracked for enhancements freeze |
 
 **Enhancements Freeze**
 
@@ -219,7 +219,7 @@ If you anticipate missing enhancements freeze, you can file an [exception reques
 *(review before posting -- do not auto-post)*
 
 ```markdown
-Hello @kubernetes-prow[bot] :wave:, v1.38 Enhancements team here.
+Hello @bitoku :wave:, v1.38 Enhancements team here.
 
 Just checking in as we approach [enhancements freeze](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#enhancements-freeze) on **Tuesday 29th September 2026 (AoE) / Wednesday 30th September 2026 12:00 UTC**.
 
@@ -249,7 +249,7 @@ The status of this enhancement is marked as `Tracked for enhancements freeze`. P
 
 | Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for v1.38 | In v1.38 milestone | Recommended v1.38 tracking board status |
 |---|---|---|---|---|---|
-| [#5999](https://github.com/kubernetes/enhancements/issues/5999) HTTP/2 cleartext (h2c) for container probes | [PR #6338](https://github.com/kubernetes/enhancements/pull/6338) | @SergeyKanzhelev | beta | yes | At risk for enhancements freeze |
+| [#5999](https://github.com/kubernetes/enhancements/issues/5999) HTTP/2 cleartext (h2c) for container probes | [PR #6338](https://github.com/kubernetes/enhancements/pull/6338) | @amritansh1502 | beta | yes | At risk for enhancements freeze |
 
 **Enhancements Freeze**
 
@@ -271,7 +271,7 @@ The status of this enhancement is marked as `Tracked for enhancements freeze`. P
 *(review before posting -- do not auto-post)*
 
 ```markdown
-Hello @SergeyKanzhelev :wave:, v1.38 Enhancements team here.
+Hello @amritansh1502 :wave:, v1.38 Enhancements team here.
 
 Just checking in as we approach [enhancements freeze](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#enhancements-freeze) on **Tuesday 29th September 2026 (AoE) / Wednesday 30th September 2026 12:00 UTC**.
 
@@ -357,7 +357,7 @@ If you anticipate missing enhancements freeze, you can file an [exception reques
 
 | Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for v1.38 | In v1.38 milestone | Recommended v1.38 tracking board status |
 |---|---|---|---|---|---|
-| [#6032](https://github.com/kubernetes/enhancements/issues/6032) localhost NodePort userspace proxy for nftables | -- | @AustinAbro321 | beta | yes | Tracked for enhancements freeze |
+| [#6032](https://github.com/kubernetes/enhancements/issues/6032) localhost NodePort userspace proxy for nftables | [PR #6378](https://github.com/kubernetes/enhancements/pull/6378) | @AustinAbro321 | beta | yes | Tracked for enhancements freeze |
 
 **Enhancements Freeze**
 
@@ -407,7 +407,7 @@ The status of this enhancement is marked as `Tracked for enhancements freeze`. P
 
 | Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for v1.38 | In v1.38 milestone | Recommended v1.38 tracking board status |
 |---|---|---|---|---|---|
-| [#6035](https://github.com/kubernetes/enhancements/issues/6035) Exec session identity propagation | [PR #6205](https://github.com/kubernetes/enhancements/pull/6205) | @SergeyKanzhelev | alpha | yes | At risk for enhancements freeze |
+| [#6035](https://github.com/kubernetes/enhancements/issues/6035) Exec session identity propagation | [PR #6205](https://github.com/kubernetes/enhancements/pull/6205) | @nispriha | alpha | yes | At risk for enhancements freeze |
 
 **Enhancements Freeze**
 
@@ -428,7 +428,7 @@ The status of this enhancement is marked as `Tracked for enhancements freeze`. P
 *(review before posting -- do not auto-post)*
 
 ```markdown
-Hello @SergeyKanzhelev :wave:, v1.38 Enhancements team here.
+Hello @nispriha :wave:, v1.38 Enhancements team here.
 
 Just checking in as we approach [enhancements freeze](https://github.com/kubernetes/sig-release/blob/master/releases/release_phases.md#enhancements-freeze) on **Tuesday 29th September 2026 (AoE) / Wednesday 30th September 2026 12:00 UTC**.
 
@@ -620,7 +620,7 @@ If you anticipate missing enhancements freeze, you can file an [exception reques
 
 | Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for v1.38 | In v1.38 milestone | Recommended v1.38 tracking board status |
 |---|---|---|---|---|---|
-| [#3541](https://github.com/kubernetes/enhancements/issues/3541) Add Recreate Update Strategy to StatefulSet | [PR #6155](https://github.com/kubernetes/enhancements/pull/6155) | @galal-hussein | beta | yes | At risk for enhancements freeze |
+| [#3541](https://github.com/kubernetes/enhancements/issues/3541) Add Recreate Update Strategy to StatefulSet | [PR #6360](https://github.com/kubernetes/enhancements/pull/6360) | @galal-hussein | beta | yes | At risk for enhancements freeze |
 
 **Enhancements Freeze**
 
@@ -783,7 +783,7 @@ If you anticipate missing enhancements freeze, you can file an [exception reques
 
 | Issue | KEP PR | Enhancement owner (KEP PR author) | Target stage for v1.38 | In v1.38 milestone | Recommended v1.38 tracking board status |
 |---|---|---|---|---|---|
-| [#6361](https://github.com/kubernetes/enhancements/issues/6361) KEP: Controller Leader Election Recovery | -- | @jpbetz | UNKNOWN | yes | At risk for enhancements freeze |
+| [#6361](https://github.com/kubernetes/enhancements/issues/6361) KEP: Controller Leader Election Recovery | [PR #6365](https://github.com/kubernetes/enhancements/pull/6365) | @jpbetz | UNKNOWN | yes | At risk for enhancements freeze |
 
 **Enhancements Freeze**
 
