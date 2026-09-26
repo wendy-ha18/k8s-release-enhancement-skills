@@ -150,8 +150,17 @@ def get_master_stage(kep_yaml_path):
 
 def last_merged_pr_for_path(path):
     """When no open PR touches this KEP, attribute ownership to whoever
-    authored the most recent merged change to kep.yaml, via the commit
-    history on that path (squash-merge commit messages end in '(#NNNN)')."""
+    authored the most recent merged change to kep.yaml.
+
+    Finds the last commit that touched the path, then asks GitHub's
+    "pull requests associated with a commit" API for the PR that merged it.
+    This works regardless of merge strategy (squash, merge commit, rebase) --
+    unlike parsing the commit message for a squash-style '(#NNNN)' suffix,
+    which misses plain merge commits ("Merge pull request #NNNN from ...",
+    no parens) and commits that aren't the merge commit itself (e.g. the
+    last commit to touch a path inside a merge-commit PR can be an internal
+    commit like "Apply feedback" with no PR reference at all), and which
+    attributes ownership to the merging bot instead of the PR's author."""
     out = subprocess.run(
         ["gh", "api", f"repos/{REPO}/commits?path={path}&per_page=1"],
         capture_output=True, text=True,
@@ -166,9 +175,26 @@ def last_merged_pr_for_path(path):
         return None, None
     commit = commits[0]
     author_login = (commit.get("author") or {}).get("login")
-    message = (commit.get("commit") or {}).get("message", "")
-    m = re.search(r"\(#(\d+)\)", message)
-    pr_url = f"https://github.com/{REPO}/pull/{m.group(1)}" if m else None
+    sha = commit.get("sha")
+    if not sha:
+        return author_login, None
+    pulls_out = subprocess.run(
+        ["gh", "api", f"repos/{REPO}/commits/{sha}/pulls"],
+        capture_output=True, text=True,
+    )
+    if pulls_out.returncode != 0:
+        return author_login, None
+    try:
+        pulls = json.loads(pulls_out.stdout)
+    except json.JSONDecodeError:
+        return author_login, None
+    merged_pulls = [p for p in pulls if p.get("merged_at")]
+    if not merged_pulls:
+        return author_login, None
+    merged_pulls.sort(key=lambda p: p.get("merged_at") or "", reverse=True)
+    pr = merged_pulls[0]
+    pr_url = pr.get("html_url") or f"https://github.com/{REPO}/pull/{pr.get('number')}"
+    author_login = (pr.get("user") or {}).get("login") or author_login
     return author_login, pr_url
 
 
@@ -1366,9 +1392,14 @@ def check_issue(issue_number):
         readme_path = f"{kep_dir}/README.md"
         prr_path = f"keps/prod-readiness/{sig}/{issue_number}.yaml"
 
-        merged_owner, merged_pr_url = last_merged_pr_for_path(kep_yaml_path)
-        owner_login = merged_owner or owner_login
-        kep_pr_url = merged_pr_url or kep_pr_url
+        if owner_login is None and kep_pr_url is None:
+            # Only fall back to the last merged change when no open PR was
+            # already confirmed above -- an outstanding open PR reflects the
+            # KEP's current pending state and must not be clobbered by a
+            # stale merged PR.
+            merged_owner, merged_pr_url = last_merged_pr_for_path(kep_yaml_path)
+            owner_login = merged_owner
+            kep_pr_url = merged_pr_url
 
         kep_yaml_content = fetch_file(REPO, kep_yaml_path)
         if kep_yaml_content is None:
